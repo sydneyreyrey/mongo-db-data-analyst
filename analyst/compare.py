@@ -15,6 +15,7 @@ def _brief(doc: dict) -> dict:
     return {
         "id": str(doc["_id"]),
         "as_of": doc.get("as_of"),
+        "report_type": doc.get("report_type", {"type_id": "general", "name": "General review"}),
         "harness_version": doc["harness_version"],
         "created_at": doc["created_at"],
         "cost_usd": doc.get("cost_usd"),
@@ -67,10 +68,13 @@ def compare(a: dict, b: dict, versions: list[dict]) -> dict[str, Any]:
         for gid in sorted(goals_old.keys() | goals_new.keys())
     ]
     same_date = old.get("as_of") == new.get("as_of")
+    general = {"type_id": "general"}
+    same_type = old.get("report_type", general)["type_id"] == new.get("report_type", general)["type_id"]
     return {
         "before": _brief(old),
         "after": _brief(new),
         "same_review_date": same_date,
+        "same_report_type": same_type,
         "note": (
             "Same review date: differences come from what the analyst learned (and normal run to run variation)."
             if same_date

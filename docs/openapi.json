@@ -220,6 +220,162 @@
         }
       }
     },
+    "/companies/{workspace_id}/report-types": {
+      "get": {
+        "summary": "List Report Types",
+        "description": "The built-in general review plus this company's own types. Free.",
+        "operationId": "list_report_types_companies__workspace_id__report_types_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Report Types Companies  Workspace Id  Report Types Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Report Type",
+        "description": "A new kind of report: a name and a brief saying what it is for. The analyst plans around the brief. Free.",
+        "operationId": "create_report_type_companies__workspace_id__report_types_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportTypeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Report Type Companies  Workspace Id  Report Types Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{workspace_id}/report-types/{type_id}": {
+      "put": {
+        "summary": "Update Report Type",
+        "description": "Rename a type or rewrite its brief. Later reports of this type follow the new brief. Free.",
+        "operationId": "update_report_type_companies__workspace_id__report_types__type_id__put",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "type_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Type Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportTypeUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Report Type Companies  Workspace Id  Report Types  Type Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/companies/{workspace_id}/reports": {
       "post": {
         "summary": "Run Report",
@@ -290,6 +446,22 @@
               "type": "string",
               "title": "Workspace Id"
             }
+          },
+          {
+            "name": "report_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Report Type"
+            }
           }
         ],
         "responses": {
@@ -321,6 +493,51 @@
         }
       }
     },
+    "/companies/{workspace_id}/reports/tree": {
+      "get": {
+        "summary": "Report Tree",
+        "description": "Reports grouped for a sidebar: type, then review date (newest first), then versions (newest first). Free.",
+        "operationId": "report_tree_companies__workspace_id__reports_tree_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Report Tree Companies  Workspace Id  Reports Tree Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/companies/{workspace_id}/reports/latest": {
       "get": {
         "summary": "Latest Report",
@@ -333,6 +550,22 @@
             "schema": {
               "type": "string",
               "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "report_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Report Type"
             }
           }
         ],
@@ -1745,10 +1978,61 @@
               }
             ],
             "title": "As Of"
+          },
+          "report_type": {
+            "type": "string",
+            "title": "Report Type",
+            "default": "general"
           }
         },
         "type": "object",
         "title": "ReportBody"
+      },
+      "ReportTypeBody": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "brief": {
+            "type": "string",
+            "title": "Brief"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "brief"
+        ],
+        "title": "ReportTypeBody"
+      },
+      "ReportTypeUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "brief": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brief"
+          }
+        },
+        "type": "object",
+        "title": "ReportTypeUpdate"
       },
       "RevertBody": {
         "properties": {

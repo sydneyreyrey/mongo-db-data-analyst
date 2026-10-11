@@ -53,7 +53,8 @@ Consider a confirm step in the UI before these, and avoid calling them on page l
 
 ```
 1. Pick or create a company     GET /companies   |  POST /companies/upload  |  POST /companies
-2. Run a report                 POST /companies/{id}/reports  -> job, poll GET /jobs/{job_id}
+2. Run a report                 POST /companies/{id}/reports  {as_of, report_type} -> job, poll GET /jobs/{job_id}
+   (sidebar)                    GET /companies/{id}/reports/tree   type > review date > versions
 3. Show the report              GET /reports/{report_id}  (or GET /companies/{id}/reports/latest)
 4. Chat or explore              POST /companies/{id}/chat   mode "chat": it answers and keeps lessons
                                                             mode "explore": what-ifs with charts, nothing kept
@@ -158,18 +159,56 @@ Same shape as one item of `GET /companies`.
 
 ---
 
+## Report types
+
+What a report is for: "End-of-month close", "Marketing", and so on. Each type has a name and a brief written by a
+person. The analyst plans the report around the brief, and follows up on the previous report **of the same
+type**. What it has learned (exclusions, definitions, goals) is shared by every type. Every company has a
+built-in `general` type.
+
+### `GET /companies/{id}/report-types` (free)
+
+```json
+[ { "type_id": "general", "name": "General review", "brief": "Whatever matters most for the business right now...",
+    "built_in": true },
+  { "type_id": "end_of_month_close", "name": "End-of-month close", "workspace_id": "co_retail_live",
+    "brief": "Margin, costs, and anomalies to resolve before the books close.", "built_in": false,
+    "created_at": "..." } ]
+```
+
+### `POST /companies/{id}/report-types` (free)
+
+```json
+{ "name": "Marketing", "brief": "Channels, promotions, and customer satisfaction; what to double down on or fix." }
+```
+
+Returns the type (`201`). `type_id` is made from the name (a suffix is added if taken). `400` if the name or
+brief is empty. A good brief says who reads it and what decisions it supports.
+
+### `PUT /companies/{id}/report-types/{type_id}` (free)
+
+`{ "name": "...", "brief": "..." }`, either field optional. Later reports of this type follow the new brief.
+`400` for `general` (built in), `404` for an unknown type.
+
+---
+
 ## Reports
 
 ### `POST /companies/{id}/reports`: run a report (costs money, background job)
 
 ```json
 // body (optional)
-{ "as_of": "2024-09-30" }
+{ "as_of": "2024-09-30", "report_type": "end_of_month_close" }
 ```
 
-`as_of` is the review date: the analyst cannot see any data after it. Omit it for "today" (all data). Returns a job; its result is a report summary (`id`, `as_of`, `harness_version`, `cost_usd`, `findings` titles).
+`as_of` is the review date: the analyst cannot see any data after it. Omit it for "today" (all data).
+`report_type` defaults to `general`; `404` if it does not exist. Returns a job; its result is a report summary
+(`id`, `as_of`, `report_type`, `harness_version`, `cost_usd`, `findings` titles).
 
-### `GET /reports/{report_id}` and `GET /companies/{id}/reports/latest`
+Running the same type and date again after a dream gives a new version under the same date: that is the
+before and after to compare.
+
+### `GET /reports/{report_id}` and `GET /companies/{id}/reports/latest?report_type=...`
 
 The full report.
 
@@ -179,6 +218,7 @@ The full report.
   "workspace_id": "co_retail_trial",
   "harness_version": 2,
   "as_of": "2024-09-30",
+  "report_type": { "type_id": "general", "name": "General review" },
   "created_at": "2026-10-11T19:03:33.415000",
   "cost_usd": 0.0827,
   "turns": 6,
@@ -223,9 +263,30 @@ How to render it:
 
 `period`, `segment`, and `pipeline` contents vary by company; treat them as display data.
 
-### `GET /companies/{id}/reports`
+### `GET /companies/{id}/reports?report_type=...`
 
-Newest first: `[{ "id", "as_of", "harness_version", "created_at", "cost_usd", "findings": ["title", ...] }]`.
+Newest first: `[{ "id", "as_of", "report_type", "harness_version", "created_at", "cost_usd", "findings": ["title", ...] }]`.
+`report_type` is optional; omit it for every type. Reports made before types existed count as `general`.
+
+### `GET /companies/{id}/reports/tree` (free)
+
+Ready-made for a sidebar: every type (including ones with no reports yet), then review dates newest first,
+then the versions run on that date, newest first.
+
+```json
+[
+  { "type_id": "end_of_month_close", "name": "End-of-month close", "brief": "...", "built_in": false,
+    "dates": [
+      { "as_of": "2024-09-30", "reports": [
+          { "id": "6acc...", "harness_version": 2, "created_at": "...", "cost_usd": 0.09 },
+          { "id": "6acb...", "harness_version": 1, "created_at": "...", "cost_usd": 0.07 } ] },
+      { "as_of": "2024-08-31", "reports": [ { "id": "...", "harness_version": 1, "...": "..." } ] } ] },
+  { "type_id": "general", "name": "General review", "brief": "...", "built_in": true, "dates": [] }
+]
+```
+
+Label each version with its notebook version, and mark versions created after a dream (compare
+`harness_version` with `GET /companies/{id}/dreams`, whose `to_version` is the version each dream produced).
 
 ---
 
@@ -417,6 +478,7 @@ learned between them and how the findings changed.
   "after":  { "id": "6acbdd85...", "as_of": "2024-09-30", "harness_version": 2, "summary": "...",
               "applied": { "time_grain": "week", "focus_metrics": ["margin"] }, "saved_views": [], "cost_usd": 0.08 },
   "same_review_date": true,
+  "same_report_type": true,
   "note": "Same review date: differences come from what the analyst learned (and normal run to run variation).",
   "notebook_changes": [
     { "version": 2, "created_by": "chat", "created_at": "...", "edits": [ { "action": "add_exclusion", "...": "..." } ] }
@@ -626,8 +688,16 @@ export type Job<T = unknown> = {
   status: "running" | "done" | "failed"; result?: T; error?: string; created_at: string; finished_at?: string;
 };
 
+export type ReportTypeRef = { type_id: string; name: string };
+
+export type ReportType = ReportTypeRef & { brief: string; built_in: boolean; created_at?: string };
+
+export type ReportTree = (ReportType & {
+  dates: { as_of: string; reports: { id: string; harness_version: number; created_at: string; cost_usd: number }[] }[];
+})[];
+
 export type ReportSummary = {
-  id: string; as_of: string; harness_version: number; created_at: string; cost_usd: number; findings: string[];
+  id: string; as_of: string; report_type: ReportTypeRef; harness_version: number; created_at: string; cost_usd: number; findings: string[];
 };
 
 export type Finding = {
@@ -644,7 +714,8 @@ export type ObjectiveStatus = {
 };
 
 export type Report = {
-  _id: string; workspace_id: string; harness_version: number; as_of: string; created_at: string;
+  _id: string; workspace_id: string; harness_version: number; as_of: string; report_type: ReportTypeRef;
+  created_at: string;
   cost_usd: number; turns: number;
   report: { summary: string; findings: Finding[]; objectives: ObjectiveStatus[];
             applied: { focus_metrics: string[]; time_grain: string } };
@@ -704,12 +775,12 @@ export type Message = {
 };
 
 export type Comparison = {
-  before: ReportBrief; after: ReportBrief; same_review_date: boolean; note: string;
+  before: ReportBrief; after: ReportBrief; same_review_date: boolean; same_report_type: boolean; note: string;
   notebook_changes: { version: number; created_by: string; created_at: string; edits: Edit[] }[];
   findings: { in_both: { before: FindingBrief; after: FindingBrief }[]; new: FindingBrief[]; dropped: FindingBrief[] };
   objectives: { objective_id: string; before: GoalBrief | null; after: GoalBrief | null }[];
 };
-type ReportBrief = { id: string; as_of: string; harness_version: number; created_at: string; cost_usd: number;
+type ReportBrief = { id: string; as_of: string; report_type: ReportTypeRef; harness_version: number; created_at: string; cost_usd: number;
   summary: string; applied: { focus_metrics?: string[]; time_grain?: string }; saved_views: string[] };
 type FindingBrief = Pick<Finding, "id" | "title" | "metric" | "segment" | "period" | "direction" | "magnitude" | "dollar_impact">;
 type GoalBrief = { value: number; target: number; status: ObjectiveStatus["status"] };
@@ -729,6 +800,7 @@ export type Scorecard = {
 
 ## Demo tips
 
+* Create two report types before the demo, for example "End-of-month close" (margin, costs, anomalies to resolve before the books close) and "Marketing" (channels, promotions, customer satisfaction), so the sidebar shows how the same analyst writes different reports for different purposes.
 * For a clean live demo on the retail data, connect a fresh workspace: `POST /companies {"company_db": "co_retail", "workspace_id": "co_retail_live"}`. It starts with a blank notebook.
 * Use `as_of` (for example `2024-09-30`) so the story fits a point in time; the retail data runs from 2021 to 2025.
 * A demo arc on retail: run a report (`as_of` `2024-09-30`), chat "Exclude test accounts, anything with an @test.example.com email", "I care about margin, not revenue", "Show me trends week by week", press Dream and show the journal, run a new report with the same `as_of`, then open the comparison.

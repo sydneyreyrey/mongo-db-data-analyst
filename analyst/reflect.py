@@ -105,6 +105,7 @@ def _report_brief(report_doc: dict, comments: list[Comment]) -> dict:
         findings.append(item)
     return {
         "as_of": report_doc.get("as_of"),
+        "report_type": report_doc.get("report_type", {}).get("name", "General review"),
         "summary": r["summary"],
         "findings": findings,
         "objectives": [

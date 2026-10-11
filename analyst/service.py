@@ -11,7 +11,7 @@ from bson import ObjectId
 from pymongo import ASCENDING, DESCENDING
 from pymongo.asynchronous.database import AsyncDatabase
 
-from analyst import memory, reports
+from analyst import memory, report_types, reports
 from analyst.agent import analyze
 from analyst.chat import chat
 from analyst.compare import compare
@@ -55,16 +55,23 @@ async def _company_data(db: AsyncDatabase, workspace_id: str, harness, as_of: da
     return ws, data
 
 
-async def run_report(db: AsyncDatabase, workspace_id: str, as_of: date | None = None) -> dict:
-    """Analyze with the latest harness, as of a review date (default today). Returns the saved report."""
+async def run_report(
+    db: AsyncDatabase, workspace_id: str, as_of: date | None = None, report_type: str = "general"
+) -> dict:
+    """Analyze with the latest harness, as of a review date (default today), for one report type.
+
+    The analyst plans around the type's brief and follows up on the previous report of the same type.
+    Returns the saved report."""
+    kind = await report_types.get_type(db, workspace_id, report_type)
     harness = await store.latest(db, workspace_id)
     ws, data = await _company_data(db, workspace_id, harness, as_of)
-    previous = await reports.latest(db, workspace_id)
+    previous = await reports.latest(db, workspace_id, kind["type_id"])
     previous_titles = [f["title"] for f in previous["report"]["findings"]] if previous else []
     meter = llm.CostMeter(limit_usd=get_settings().max_usd)
     analysis = await analyze(harness, data, ws["company_db"], meter, today=as_of or date.today(),
-                             previous=previous_titles)  # fmt: skip
-    report_id = await reports.save(db, workspace_id, harness.version, analysis, as_of=as_of or date.today())
+                             previous=previous_titles, report_type=kind)  # fmt: skip
+    report_id = await reports.save(db, workspace_id, harness.version, analysis, as_of=as_of or date.today(),
+                                   report_type=kind)  # fmt: skip
     return await db.reports.find_one({"_id": report_id})
 
 
@@ -369,6 +376,31 @@ async def run_dream(db: AsyncDatabase, workspace_id: str) -> dict:
     }
     await db.dreams.insert_one(doc)
     return doc
+
+
+async def report_tree(db: AsyncDatabase, workspace_id: str) -> list[dict]:
+    """Reports grouped for a sidebar: type, then review date (newest first), then versions (newest first)."""
+    types = await report_types.list_types(db, workspace_id)
+    docs = await db.reports.find(
+        {"workspace_id": workspace_id},
+        {"report": 0, "charts": 0, "template_charts": 0, "steps": 0, "usage": 0},
+        sort=[("as_of", DESCENDING), ("created_at", DESCENDING)],
+    ).to_list()
+    tree = []
+    for kind in types:
+        mine = [d for d in docs if d.get("report_type", {"type_id": "general"})["type_id"] == kind["type_id"]]
+        dates: dict[str, list] = {}
+        for d in mine:
+            dates.setdefault(d.get("as_of"), []).append(
+                {
+                    "id": str(d["_id"]),
+                    "harness_version": d["harness_version"],
+                    "created_at": d["created_at"],
+                    "cost_usd": d.get("cost_usd"),
+                }  # fmt: skip
+            )
+        tree.append({**kind, "dates": [{"as_of": k, "reports": v} for k, v in dates.items()]})
+    return tree
 
 
 async def compare_reports(db: AsyncDatabase, report_a: str, report_b: str) -> dict:

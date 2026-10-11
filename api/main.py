@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pymongo import DESCENDING
 
-from analyst import memory, service
+from analyst import memory, report_types, reports, service
 from analyst.data import to_jsonable
 from api import jobs
 from common.db import get_client, get_db
@@ -61,6 +61,7 @@ def report_summary(doc: dict) -> dict:
     return {
         "id": str(doc["_id"]),
         "as_of": doc.get("as_of"),
+        "report_type": doc.get("report_type", {"type_id": "general", "name": "General review"}),
         "harness_version": doc["harness_version"],
         "created_at": doc["created_at"],
         "cost_usd": doc.get("cost_usd"),
@@ -143,11 +144,54 @@ async def set_time_fields(workspace_id: str, body: TimeFieldsBody) -> dict:
     return out(await store.get_workspace(get_db(), workspace_id))
 
 
+# Report types
+
+
+class ReportTypeBody(BaseModel):
+    name: str
+    brief: str
+
+
+class ReportTypeUpdate(BaseModel):
+    name: str | None = None
+    brief: str | None = None
+
+
+@app.get("/companies/{workspace_id}/report-types")
+async def list_report_types(workspace_id: str) -> list[dict]:
+    """The built-in general review plus this company's own types. Free."""
+    await workspace_or_404(workspace_id)
+    return out(await report_types.list_types(get_db(), workspace_id))
+
+
+@app.post("/companies/{workspace_id}/report-types", status_code=201)
+async def create_report_type(workspace_id: str, body: ReportTypeBody) -> dict:
+    """A new kind of report: a name and a brief saying what it is for. The analyst plans around the brief. Free."""
+    await workspace_or_404(workspace_id)
+    try:
+        return out(await report_types.create_type(get_db(), workspace_id, body.name, body.brief))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.put("/companies/{workspace_id}/report-types/{type_id}")
+async def update_report_type(workspace_id: str, type_id: str, body: ReportTypeUpdate) -> dict:
+    """Rename a type or rewrite its brief. Later reports of this type follow the new brief. Free."""
+    await workspace_or_404(workspace_id)
+    try:
+        return out(await report_types.update_type(get_db(), workspace_id, type_id, body.name, body.brief))
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
 # Reports
 
 
 class ReportBody(BaseModel):
     as_of: date | None = None
+    report_type: str = "general"
 
 
 @app.post("/companies/{workspace_id}/reports", status_code=202)
@@ -155,23 +199,36 @@ async def run_report(workspace_id: str, body: ReportBody | None = None) -> dict:
     """Start a report with the latest harness. Poll GET /jobs/{id}; the result holds the report id."""
     await workspace_or_404(workspace_id)
     as_of = body.as_of if body else None
+    type_id = body.report_type if body else "general"
+    try:
+        await report_types.get_type(get_db(), workspace_id, type_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
 
     async def work() -> dict:
-        doc = await service.run_report(get_db(), workspace_id, as_of)
+        doc = await service.run_report(get_db(), workspace_id, as_of, type_id)
         return report_summary(doc)
 
     return await start_job("report", workspace_id, work)
 
 
 @app.get("/companies/{workspace_id}/reports")
-async def list_reports(workspace_id: str) -> list[dict]:
-    docs = await get_db().reports.find({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)]).to_list()
+async def list_reports(workspace_id: str, report_type: str | None = None) -> list[dict]:
+    query = {"workspace_id": workspace_id, **(reports.type_filter(report_type) if report_type else {})}
+    docs = await get_db().reports.find(query, sort=[("created_at", DESCENDING)]).to_list()
     return out([report_summary(d) for d in docs])
 
 
+@app.get("/companies/{workspace_id}/reports/tree")
+async def report_tree(workspace_id: str) -> list[dict]:
+    """Reports grouped for a sidebar: type, then review date (newest first), then versions (newest first). Free."""
+    await workspace_or_404(workspace_id)
+    return out(await service.report_tree(get_db(), workspace_id))
+
+
 @app.get("/companies/{workspace_id}/reports/latest")
-async def latest_report(workspace_id: str) -> dict:
-    doc = await get_db().reports.find_one({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)])
+async def latest_report(workspace_id: str, report_type: str | None = None) -> dict:
+    doc = await reports.latest(get_db(), workspace_id, report_type)
     if not doc:
         raise HTTPException(404, "No reports yet")
     return out(doc)

@@ -71,19 +71,22 @@ async def run_templates(
     return runs, charts, texts
 
 
-def kickoff(company_db: str, today: date, previous: list[str], standing_views: list[str]) -> str:
+def kickoff(
+    company_db: str, today: date, previous: list[str], standing_views: list[str], report_type: dict | None = None
+) -> str:
+    kind = report_type or {"name": "General review", "brief": "Whatever matters most for the business right now."}
     parts = [
-        f"Analyze the company database `{company_db}`. Today is {today.isoformat()}; this is your "
-        "regular business review and you can only see data up to today.",
-        "Orient yourself (what collections exist, what a document looks like, the date range), then "
-        "investigate what is most important for this business right now: trends, drops, spikes, anomalies, "
-        "and which segments drive them. Prioritize what changed recently. Compare against a baseline so "
-        "every finding has a size.",
+        f"Analyze the company database `{company_db}`. Today is {today.isoformat()}; you can only see data up to "
+        f"today. This report is a {kind['name']}. Its purpose: {kind['brief']}",
+        "Orient yourself (what collections exist, what a document looks like, the date range), then plan your "
+        "investigation around that purpose: find what matters most for it right now (trends, drops, spikes, "
+        "anomalies) and which segments drive them. Prioritize what changed recently. Compare against a baseline "
+        "so every finding has a size.",
         "Check your numbers with queries before you claim them. Report the status of every objective in the "
         "playbook. When done, call submit_report.",
     ]
     if previous:
-        parts.append("Your previous review reported:\n" + "\n".join(f"- {t}" for t in previous))
+        parts.append(f"Your previous {kind['name']} reported:\n" + "\n".join(f"- {t}" for t in previous))
     if standing_views:
         parts.append(
             "Standing views the user asked to see every time (already run, shown in the report as is). "
@@ -144,11 +147,14 @@ async def analyze(
     meter: llm.CostMeter,
     today: date,
     previous: list[str] | None = None,
+    report_type: dict | None = None,
 ) -> Analysis:
     settings = get_settings()
     system = render(harness)
     template_runs, template_charts, standing = await run_templates(data, harness.knowledge.templates)
-    messages: list[dict[str, Any]] = [{"role": "user", "content": kickoff(company_db, today, previous or [], standing)}]
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": kickoff(company_db, today, previous or [], standing, report_type)}
+    ]
     steps: list[Step] = []
     usage: list[llm.Usage] = []
 
