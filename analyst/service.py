@@ -24,6 +24,7 @@ from common.db import get_client
 from common.settings import get_settings
 from harness import store
 from harness.diff import diff
+from harness.edits import Edit
 
 
 def _end_of(day: date) -> datetime:
@@ -153,8 +154,13 @@ async def chat_message(
     report_id: str | None = None,
     finding_id: str | None = None,
     template_id: str | None = None,
+    mode: str = "chat",
 ) -> dict:
-    """Send one reader message. The reply may include lessons kept in working memory (permanent at the next dream)."""
+    """Send one reader message.
+
+    chat mode: the reply may include lessons kept in working memory (permanent at the next dream).
+    explore mode: the reply may include exploration steps with charts; nothing is learned until kept.
+    """
     ws = await store.get_workspace(db, workspace_id)
     lock = _chat_locks.setdefault(workspace_id, asyncio.Lock())
     async with lock:
@@ -163,6 +169,7 @@ async def chat_message(
             if not convo:
                 raise KeyError(f"No conversation {conversation_id!r}")
             report_id = report_id or convo.get("report_id")
+            mode = convo.get("mode", "chat")
         if report_id:
             report_doc = await db.reports.find_one({"_id": ObjectId(report_id), "workspace_id": workspace_id})
             if not report_doc:
@@ -172,7 +179,7 @@ async def chat_message(
         if not conversation_id:
             conversation_id = f"conv_{ObjectId()}"
             await db.conversations.insert_one(
-                {"_id": conversation_id, "workspace_id": workspace_id,
+                {"_id": conversation_id, "workspace_id": workspace_id, "mode": mode,
                  "report_id": str(report_doc["_id"]) if report_doc else None, "created_at": datetime.now(UTC)}
             )  # fmt: skip
 
@@ -203,27 +210,79 @@ async def chat_message(
         async def remember(text, edits):
             return await memory.remember(db, workspace_id, conversation_id, message_id, text, edits)
 
+        async def record_step(step):
+            doc = {"_id": f"step_{ObjectId()}", "workspace_id": workspace_id, "conversation_id": conversation_id,
+                   "message_id": message_id, "status": "shown", "created_at": datetime.now(UTC), **step}  # fmt: skip
+            candidate = step.get("candidate_lesson")
+            match = await memory.find_matching(db, workspace_id, candidate["edits"]) if candidate else None
+            if match:  # the reader came back to something already in working memory
+                await memory.reinforce(db, match["_id"], "repeated", doc["_id"])
+                doc["reinforced_lesson"] = match["_id"]
+            await db.explorations.insert_one(doc)
+            return doc
+
         meter = llm.CostMeter(limit_usd=get_settings().max_usd)
         note = memory.working_memory_note(lessons)
         reply = await chat(harness, note, make_data, history, message, message_id, report_doc, pointing_at, remember,
-                           meter)  # fmt: skip
+                           meter, mode=mode, record_step=record_step)  # fmt: skip
         reply_id = f"m_{ObjectId()}"
-        new_lessons = [{k: lesson[k] for k in ("_id", "text", "edits", "status")} for lesson in reply.lessons]
+        new_lessons = [
+            {k: lesson[k] for k in ("_id", "text", "edits", "status", "strength")} for lesson in reply.lessons
+        ]
+        step_ids = [step["_id"] for step in reply.steps]
         await db.messages.insert_one(
             {"_id": reply_id, "conversation_id": conversation_id, "workspace_id": workspace_id, "role": "assistant",
-             "text": reply.text or "Done.", "lessons": new_lessons, "cost_usd": reply.cost_usd,
+             "text": reply.text or "Done.", "lessons": new_lessons, "steps": step_ids, "cost_usd": reply.cost_usd,
              "created_at": datetime.now(UTC)}
         )  # fmt: skip
         return {
             "conversation_id": conversation_id,
+            "mode": mode,
             "message_id": message_id,
             "reply_id": reply_id,
             "reply": reply.text or "Done.",
             "lessons": new_lessons,
+            "steps": reply.steps,
             "working_memory": len(lessons) + len(new_lessons),
             "harness_version": long_term.version,
             "cost_usd": reply.cost_usd,
         }
+
+
+# Explore mode: the reader decides what lands
+
+
+async def keep_step(db: AsyncDatabase, workspace_id: str, step_id: str) -> dict:
+    """ "Remember this": turn an exploration step into a strong lesson in working memory. Free (no model call)."""
+    step = await db.explorations.find_one({"_id": step_id, "workspace_id": workspace_id})
+    if not step:
+        raise KeyError(f"No exploration step {step_id!r}")
+    candidate = step.get("candidate_lesson")
+    if candidate:
+        text, edits = candidate["text"], [Edit.model_validate(e) for e in candidate["edits"]]
+    else:  # a result worth watching: keep it as a saved view
+        target = "_".join(step["title"].lower().split())[:40] or "saved_view"
+        text = f"Keep showing: {step['title']}"
+        edits = [Edit(action="save_template", target=target, rationale="The reader kept this exploration.",
+                      source=step["message_id"], payload={"name": step["title"], "description": step["summary"],
+                      "pipeline": step["pipeline"], "chart": step["chart"]})]  # fmt: skip
+    lesson = await memory.remember(db, workspace_id, step["conversation_id"], step["message_id"], text, edits, "kept")
+    await db.explorations.update_one({"_id": step_id}, {"$set": {"status": "kept", "lesson_id": lesson["_id"]}})
+    return lesson
+
+
+async def reject_step(db: AsyncDatabase, workspace_id: str, step_id: str) -> dict:
+    """ "Not useful": mark the step, and weaken the matching lesson if one is in working memory. Free."""
+    step = await db.explorations.find_one({"_id": step_id, "workspace_id": workspace_id})
+    if not step:
+        raise KeyError(f"No exploration step {step_id!r}")
+    weakened = None
+    candidate = step.get("candidate_lesson")
+    match = await memory.find_matching(db, workspace_id, candidate["edits"]) if candidate else None
+    if match:
+        weakened = await memory.reinforce(db, match["_id"], "pushback", step_id)
+    await db.explorations.update_one({"_id": step_id}, {"$set": {"status": "rejected"}})
+    return {"step_id": step_id, "status": "rejected", "weakened_lesson": weakened}
 
 
 # Memory and dreaming
@@ -254,7 +313,8 @@ async def run_dream(db: AsyncDatabase, workspace_id: str) -> dict:
     """Consolidate working memory (and pending comments, off-track goals) into a new long-term version."""
     ws = await store.get_workspace(db, workspace_id)
     long_term = await store.latest(db, workspace_id)
-    lessons = await memory.working_lessons(db, workspace_id)
+    ready, waiting, fading = memory.split_for_dream(await memory.working_lessons(db, workspace_id))
+    lessons = ready
     comments = await list_comments(db, workspace_id, status="pending")
     recent = await db.reports.find({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)]).to_list(3)
     as_of = date.fromisoformat(recent[0]["as_of"]) if recent and recent[0].get("as_of") else None
@@ -283,6 +343,14 @@ async def run_dream(db: AsyncDatabase, workspace_id: str) -> dict:
             {"_id": {"$in": [c["_id"] for c in comments]}},
             {"$set": {"status": "applied", "applied_in_version": to_version, "dream_id": dream_id}},
         )
+    for lesson in waiting:
+        await db.working_memory.update_one({"_id": lesson["_id"]}, {"$inc": {"dreams_seen": 1}})
+    for lesson in fading:
+        await db.working_memory.update_one(
+            {"_id": lesson["_id"]},
+            {"$set": {"status": "faded", "dream_id": dream_id, "reason": "Never reinforced."},
+             "$inc": {"dreams_seen": 1}},
+        )  # fmt: skip
     doc = {
         "_id": dream_id,
         "workspace_id": workspace_id,
@@ -291,6 +359,8 @@ async def run_dream(db: AsyncDatabase, workspace_id: str) -> dict:
         "from_version": long_term.version,
         "to_version": to_version,
         "lessons_reviewed": len(lessons),
+        "waiting": [{"_id": x["_id"], "text": x["text"], "strength": x.get("strength")} for x in waiting],
+        "faded": [{"_id": x["_id"], "text": x["text"], "strength": x.get("strength")} for x in fading],
         "comments_reviewed": len(comments),
         "decisions": [d.model_dump() for d in result.decisions],
         "edits": [e.model_dump() for e in result.edits],

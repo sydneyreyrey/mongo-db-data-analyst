@@ -8,10 +8,16 @@ It works like a person's memory, and all of it lives in MongoDB:
 
 | Memory | What it is | Collection |
 |---|---|---|
-| Working memory | Lessons picked up in chat. Used right away in every conversation, not yet permanent. | `working_memory` |
-| Dreaming | Consolidation: reviews the lessons, pending comments, off-track goals, and recent reports; keeps, merges, or drops each lesson; writes a journal. | `dreams` |
+| Exploration | Back and forth what-ifs with charts. Nothing is learned until the reader keeps a step. | `explorations` |
+| Working memory | Lessons from chat instructions and kept explorations, each with a strength. Used right away in conversations, not yet permanent. | `working_memory` |
+| Dreaming | Consolidation: takes the strong lessons (plus pending comments, off-track goals, recent reports); keeps, merges, or drops each with a reason; writes a journal. Weak lessons wait, and fade if never reinforced. | `dreams` |
 | Long-term memory | The notebook (harness). Reports only read this, so new reports change after a dream. Every version is kept. | `harness_versions` |
 | Episodic memory | What happened: reports and conversations. | `reports`, `conversations`, `messages` |
+
+**What lands is decided by evidence, not by the AI alone.** Every lesson has a strength: a chat instruction
+counts 2, pressing "remember this" on an exploration step counts 3, coming back to the same idea adds 1, and
+"not useful" subtracts 2. Only lessons with strength 2 or more reach a dream. Weaker ones wait, and fade
+after two dreams without reinforcement.
 
 In production, dreaming would run on a schedule (for example nightly, with a cron job or an Atlas Scheduled
 Trigger calling `POST /companies/{id}/dream`). In the demo it is a Dream button.
@@ -49,7 +55,10 @@ Consider a confirm step in the UI before these, and avoid calling them on page l
 1. Pick or create a company     GET /companies   |  POST /companies/upload  |  POST /companies
 2. Run a report                 POST /companies/{id}/reports  -> job, poll GET /jobs/{job_id}
 3. Show the report              GET /reports/{report_id}  (or GET /companies/{id}/reports/latest)
-4. Chat about it                POST /companies/{id}/chat   (it answers, and keeps lessons as you go)
+4. Chat or explore              POST /companies/{id}/chat   mode "chat": it answers and keeps lessons
+                                                            mode "explore": what-ifs with charts, nothing kept
+   Keep what lands              POST /companies/{id}/explorations/{step_id}/keep    ("remember this")
+                                POST /companies/{id}/explorations/{step_id}/reject  ("not useful")
 5. Show working memory          the reply's `lessons`, and GET /companies/{id}/memory
                                 (each lesson can be forgotten: DELETE /companies/{id}/memory/{lesson_id})
 6. Dream                        POST /companies/{id}/dream  -> job; show the journal and what changed
@@ -220,13 +229,20 @@ Newest first: `[{ "id", "as_of", "harness_version", "created_at", "cost_usd", "f
 
 ---
 
-## Chat: the analyst answers and learns as you talk
+## Chat and explore: talking with the analyst
+
+One endpoint, two modes, chosen when a conversation starts (later messages in it keep its mode):
+
+* **chat**: the analyst answers, and turns instructions for the future into lessons in working memory.
+* **explore**: back and forth what-ifs. Each result comes back as a step with its own chart. Nothing is
+  learned; the reader presses "remember this" on the steps that land.
 
 ### `POST /companies/{id}/chat` (costs money; waits for the reply)
 
 ```json
 // body
 { "message": "Exclude test accounts, anything with an @test.example.com email.",
+  "mode": "chat",                      // or "explore"; only used when starting a conversation
   "conversation_id": null,            // omit to start a new conversation; reuse the returned id to continue
   "report_id": "6acbdd85...",          // optional; defaults to the latest report (or the conversation's report)
   "finding_id": null,                  // optional: the chart the user is pointing at ("why is this down?")
@@ -238,17 +254,19 @@ Usually returns in 5 to 40 seconds (longer if it has to look at the data). No jo
 ```json
 {
   "conversation_id": "conv_6acc...",
+  "mode": "chat",
   "message_id": "m_6acc...",           // the user's message
   "reply_id": "m_6acc...",             // the analyst's reply
   "reply": "Got it. From now on I will leave out @test.example.com accounts; they are 40 sales in August 2024.",
   "lessons": [
-    { "_id": "lesson_6acc...", "status": "working", "text": "Exclude test accounts (@test.example.com).",
+    { "_id": "lesson_6acc...", "status": "working", "strength": 2, "text": "Exclude test accounts (@test.example.com).",
       "edits": [ { "action": "add_exclusion", "target": "test_accounts",
                    "payload": { "filter": { "customer.email": { "$regex": "@test\\.example\\.com$" } },
                                 "reason": "QA accounts inflate revenue" },
                    "rationale": "Reader asked to exclude test accounts.",
                    "source": "m_6acc..." } ] }
   ],
+  "steps": [],                         // explore mode only, see below
   "working_memory": 1,                 // lessons now waiting for the next dream
   "harness_version": 1,                // long-term memory version; unchanged until a dream
   "cost_usd": 0.021
@@ -270,14 +288,49 @@ Show each lesson as a chip ("Working memory: Exclude test accounts") with a Forg
 Returns `409` while a reflect or dream job runs for the same company, `404` for an unknown conversation or
 report, `400` for an empty message.
 
+### Explore mode replies
+
+In explore mode, `lessons` is always empty and `steps` holds what the analyst showed:
+
+```json
+"steps": [
+  { "_id": "step_6acc...", "status": "shown", "title": "Revenue by store without test accounts",
+    "summary": "Denver's August spike disappears once test accounts are excluded.",
+    "vega_lite": { "$schema": "https://vega.github.io/schema/vega-lite/v5.json", "...": "..." },
+    "pipeline": { "collection": "sales", "stages": [ "..." ] },
+    "chart": { "type": "bar", "x": "store", "y": "revenue", "color": null, "title": "..." },
+    "candidate_lesson": { "text": "Exclude test accounts (@test.example.com).", "edits": [ "..." ] },
+    "reinforced_lesson": null,         // set when this step repeats something already in working memory
+    "conversation_id": "conv_...", "message_id": "m_...", "created_at": "..." }
+]
+```
+
+Render each step as a card: title, summary, `vegaEmbed(el, step.vega_lite)`, and two buttons, **Remember this**
+and **Not useful**. If `candidate_lesson` is set, show its text under the chart ("Would remember: Exclude test
+accounts"); without one, keeping the step saves the chart as a view shown in every future report.
+
+### `POST /companies/{id}/explorations/{step_id}/keep` (free)
+
+"Remember this". Adds a strong lesson (strength 3) to working memory, or strengthens the matching one if it is
+already there. Returns the lesson. The step's `status` becomes `kept`.
+
+### `POST /companies/{id}/explorations/{step_id}/reject` (free)
+
+"Not useful". The step's `status` becomes `rejected`; if a matching lesson is in working memory it loses 2
+strength. Returns `{ "step_id", "status": "rejected", "weakened_lesson": {...} | null }`.
+
+### `GET /conversations/{conversation_id}/steps` (free)
+
+All steps in a conversation, oldest first, with their status (`shown`, `kept`, `rejected`).
+
 ### `GET /companies/{id}/conversations`
 
-Newest first: `[{ "_id": "conv_...", "workspace_id", "report_id", "created_at" }]`.
+Newest first: `[{ "_id": "conv_...", "workspace_id", "mode", "report_id", "created_at" }]`.
 
 ### `GET /conversations/{conversation_id}/messages`
 
 Oldest first. User messages: `{ "_id", "role": "user", "text", "finding_id", "template_id", "created_at" }`.
-Replies: `{ "_id", "role": "assistant", "text", "lessons": [...], "cost_usd", "created_at" }`.
+Replies: `{ "_id", "role": "assistant", "text", "lessons": [...], "steps": ["step_..."], "cost_usd", "created_at" }`.
 
 ---
 
@@ -303,8 +356,9 @@ Dream button between them.
 ### `GET /companies/{id}/memory/lessons` (free)
 
 Every lesson ever learned, oldest first, with what happened to it: `status` is `working`, `consolidated`
-(made permanent), `dropped` (the dream decided not to keep it, see `reason`), or `forgotten` (removed by the
-user). Consolidated and dropped lessons carry `dream_id`, `outcome`, `reason`, and `consolidated_in_version`.
+(made permanent), `dropped` (the dream decided not to keep it, see `reason`), `faded` (never reinforced), or
+`forgotten` (removed by the user). Each has `strength`, `evidence` (`[{ "kind": "instruction" | "kept" |
+"repeated" | "pushback", "ref", "at" }]`), and `dreams_seen`. Consolidated and dropped lessons carry `dream_id`, `outcome`, `reason`, and `consolidated_in_version`.
 
 ### `DELETE /companies/{id}/memory/{lesson_id}` (free)
 
@@ -313,8 +367,9 @@ not in working memory (already consolidated, dropped, or forgotten).
 
 ### `POST /companies/{id}/dream` (costs money, background job)
 
-No body. The analyst reviews working memory, pending comments, objectives that are off track, and its three
-most recent reports, then updates long-term memory. Poll `GET /jobs/{job_id}`; the result is the dream:
+No body. The analyst reviews the strong lessons in working memory (strength 2 or more), pending comments,
+objectives that are off track, and its three most recent reports, then updates long-term memory. Weaker
+lessons are not shown to it: they wait, or fade after two dreams without reinforcement. Poll `GET /jobs/{job_id}`; the result is the dream:
 
 ```json
 {
@@ -323,6 +378,8 @@ most recent reports, then updates long-term memory. Poll `GET /jobs/{job_id}`; t
   "from_version": 1,
   "to_version": 2,
   "lessons_reviewed": 3,
+  "waiting": [ { "_id": "lesson_...", "text": "Maybe look at coupons.", "strength": 1 } ],
+  "faded":   [ { "_id": "lesson_...", "text": "Split by gender.", "strength": 1 } ],
   "comments_reviewed": 0,
   "decisions": [
     { "source": "lesson_6acc...", "outcome": "applied", "reason": "Holds up: 40 sales match." },
@@ -608,13 +665,22 @@ export type Edit = {
 
 export type Lesson = {
   _id: string; text: string; edits: Edit[]; created_at?: string; conversation_id?: string; message_id?: string;
-  status: "working" | "consolidated" | "dropped" | "forgotten";
+  status: "working" | "consolidated" | "dropped" | "faded" | "forgotten";
+  strength: number; dreams_seen?: number;
+  evidence?: { kind: "instruction" | "kept" | "repeated" | "pushback"; ref: string; at: string }[];
   dream_id?: string; outcome?: "applied" | "merged" | "dropped"; reason?: string; consolidated_in_version?: number;
 };
 
 export type ChatReply = {
-  conversation_id: string; message_id: string; reply_id: string; reply: string;
-  lessons: Lesson[]; working_memory: number; harness_version: number; cost_usd: number;
+  conversation_id: string; mode: "chat" | "explore"; message_id: string; reply_id: string; reply: string;
+  lessons: Lesson[]; steps: Step[]; working_memory: number; harness_version: number; cost_usd: number;
+};
+
+export type Step = {
+  _id: string; status: "shown" | "kept" | "rejected"; title: string; summary: string;
+  vega_lite: object; pipeline: { collection: string; stages: object[] }; chart: Finding["chart"];
+  candidate_lesson: { text: string; edits: Edit[] } | null; reinforced_lesson?: string | null;
+  lesson_id?: string; conversation_id: string; message_id: string; created_at: string;
 };
 
 export type Memory = {
@@ -626,6 +692,7 @@ export type Memory = {
 export type Dream = {
   _id: string; journal: string; from_version: number; to_version: number; created_at: string;
   lessons_reviewed: number; comments_reviewed: number;
+  waiting: { _id: string; text: string; strength: number }[]; faded: { _id: string; text: string; strength: number }[];
   decisions: { source: string; outcome: "applied" | "merged" | "dropped"; reason: string }[];
   edits: Edit[]; diff: string[]; cost_usd: number;
 };
@@ -666,3 +733,4 @@ export type Scorecard = {
 * Use `as_of` (for example `2024-09-30`) so the story fits a point in time; the retail data runs from 2021 to 2025.
 * A demo arc on retail: run a report (`as_of` `2024-09-30`), chat "Exclude test accounts, anything with an @test.example.com email", "I care about margin, not revenue", "Show me trends week by week", press Dream and show the journal, run a new report with the same `as_of`, then open the comparison.
 * A question that shows it answering without learning: "Why did Denver jump in August?"
+* An explore arc: start a conversation with `mode: "explore"`, ask a few what-ifs ("revenue by store without test accounts", "margin by product", "weekly online satisfaction"), press Remember this on two steps and Not useful on one, then Dream. The journal and `waiting` / `faded` lists show that only what landed became long-term memory.

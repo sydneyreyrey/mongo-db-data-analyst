@@ -658,6 +658,153 @@
         }
       }
     },
+    "/conversations/{conversation_id}/steps": {
+      "get": {
+        "summary": "List Steps",
+        "description": "Exploration steps in a conversation, oldest first, with charts and whether each was kept. Free.",
+        "operationId": "list_steps_conversations__conversation_id__steps_get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Steps Conversations  Conversation Id  Steps Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{workspace_id}/explorations/{step_id}/keep": {
+      "post": {
+        "summary": "Keep Step",
+        "description": "\"Remember this\": the step becomes a strong lesson in working memory, made permanent at the next dream. Free.",
+        "operationId": "keep_step_companies__workspace_id__explorations__step_id__keep_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Step Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Keep Step Companies  Workspace Id  Explorations  Step Id  Keep Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{workspace_id}/explorations/{step_id}/reject": {
+      "post": {
+        "summary": "Reject Step",
+        "description": "\"Not useful\": marks the step and weakens a matching lesson in working memory. Free.",
+        "operationId": "reject_step_companies__workspace_id__explorations__step_id__reject_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "step_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Step Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reject Step Companies  Workspace Id  Explorations  Step Id  Reject Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/conversations/{conversation_id}/messages": {
       "get": {
         "summary": "List Messages",
@@ -1426,6 +1573,15 @@
           "message": {
             "type": "string",
             "title": "Message"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "explore"
+            ],
+            "title": "Mode",
+            "default": "chat"
           },
           "conversation_id": {
             "anyOf": [

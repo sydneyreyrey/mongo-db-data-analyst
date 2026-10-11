@@ -24,7 +24,10 @@ DREAM_INSTRUCTIONS = (
     """You are dreaming: consolidating working memory into long-term memory (the playbook above).
 
 Review everything new: lessons from recent conversations, pending comments, objectives that are off track,
-and your recent reports. Then make the playbook reflect what you have really learned:
+and your recent reports. The lessons here have already been confirmed by the reader (they kept them, gave
+them as instructions, or came back to them; `strength` and `evidence` show how). Make them permanent unless
+they fail against the data or conflict with a newer lesson, and say why if you drop one. Then make the
+playbook reflect what you have really learned:
 - keep lessons that should guide every future report, written as clean, precise entries
 - merge lessons that say the same thing into one entry
 - when lessons contradict each other, the more recent one wins unless the data says otherwise

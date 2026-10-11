@@ -229,6 +229,7 @@ async def list_reflections(workspace_id: str) -> list[dict]:
 
 class ChatBody(BaseModel):
     message: str
+    mode: Literal["chat", "explore"] = "chat"
     conversation_id: str | None = None
     report_id: str | None = None
     finding_id: str | None = None
@@ -261,6 +262,35 @@ async def list_conversations(workspace_id: str) -> list[dict]:
         await get_db().conversations.find({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)]).to_list()
     )
     return out(docs)
+
+
+@app.get("/conversations/{conversation_id}/steps")
+async def list_steps(conversation_id: str) -> list[dict]:
+    """Exploration steps in a conversation, oldest first, with charts and whether each was kept. Free."""
+    if not await get_db().conversations.find_one({"_id": conversation_id}):
+        raise HTTPException(404, "No such conversation")
+    docs = await get_db().explorations.find({"conversation_id": conversation_id}, sort=[("created_at", 1)]).to_list()
+    return out(docs)
+
+
+@app.post("/companies/{workspace_id}/explorations/{step_id}/keep")
+async def keep_step(workspace_id: str, step_id: str) -> dict:
+    """ "Remember this": the step becomes a strong lesson in working memory, made permanent at the next dream. Free."""
+    await workspace_or_404(workspace_id)
+    try:
+        return out(await service.keep_step(get_db(), workspace_id, step_id))
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+
+
+@app.post("/companies/{workspace_id}/explorations/{step_id}/reject")
+async def reject_step(workspace_id: str, step_id: str) -> dict:
+    """ "Not useful": marks the step and weakens a matching lesson in working memory. Free."""
+    await workspace_or_404(workspace_id)
+    try:
+        return out(await service.reject_step(get_db(), workspace_id, step_id))
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
 
 
 @app.get("/conversations/{conversation_id}/messages")

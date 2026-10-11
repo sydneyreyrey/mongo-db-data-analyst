@@ -12,8 +12,9 @@ One agent, two modes. Each **cycle** is one quarterly review with an `as_of` dat
 
 Modeled on human memory, all in MongoDB:
 
-* **Working memory** (`working_memory`): lessons learned in chat. Applied at once in every conversation for that company, never read by reports.
-* **Dreaming** (`dreams`): consolidation. Reviews working lessons, pending comments, off-track objectives, and recent reports; keeps, merges, or drops each lesson with a reason; writes a journal; saves one new harness version (`created_by: dream`). A button in the demo; a nightly schedule in production.
+* **Exploration** (`explorations`): explore mode what-ifs, each a step with a chart and an optional candidate lesson. Nothing is learned until the reader keeps a step.
+* **Working memory** (`working_memory`): lessons from chat instructions and kept steps. Applied at once in conversations, never read by reports. Each has a strength from evidence (instruction 2, kept 3, repeated +1, pushback -2), computed in code.
+* **Dreaming** (`dreams`): consolidation. Only lessons with strength 2 or more reach it; weaker ones wait and fade after two dreams. Reviews those lessons, pending comments, off-track objectives, and recent reports; keeps, merges, or drops each lesson with a reason; writes a journal; saves one new harness version (`created_by: dream`). A button in the demo; a nightly schedule in production.
 * **Long-term memory** (`harness_versions`): the harness. Reports read only this.
 * **Episodic memory** (`reports`, `conversations`, `messages`).
 

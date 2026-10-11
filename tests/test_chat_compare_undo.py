@@ -242,3 +242,75 @@ async def test_dream_consolidates_working_memory(monkeypatch, memory_db):
     assert statuses == {lesson_a: "consolidated", lesson_b: "dropped"}
     assert (await service.memory_view(db, "ws"))["working"] == []
     assert (await service.run_dream(db, "ws"))["journal"] == "Nothing new to consolidate."
+
+
+BY_STORE = {"collection": "sales", "stages": [{"$group": {"_id": "$storeLocation", "n": {"$sum": 1}}}]}
+BAR = {"type": "bar", "x": "_id", "y": "n", "title": "Orders by store"}
+WEEKLY_LESSON = {"lesson": "Show trends weekly.", "edits": WEEKLY["edits"]}
+
+
+def show(title, lesson=None):
+    payload = {"title": title, "summary": f"{title} summary", "pipeline": BY_STORE, "chart": BAR}
+    return {**payload, "lesson": lesson} if lesson else payload
+
+
+@needs_atlas
+async def test_explore_mode_only_what_lands_becomes_long_term(monkeypatch, memory_db):
+    from analyst import memory, service
+    from harness import store
+
+    db = memory_db
+    await service.connect(db, "ws", "co_retail")
+    call, _ = fake_llm([
+        ([tool("show", show("Orders by store")),
+          tool("show", show("Without test accounts", EXCLUDE), "t2")], "tool_use"),
+        ([text("Here are two views.")], "end_turn"),
+        ([tool("show", show("Weekly view", WEEKLY_LESSON))], "tool_use"), ([text("Weekly.")], "end_turn"),
+        ([tool("show", show("Weekly again", WEEKLY_LESSON))], "tool_use"), ([text("Weekly again.")], "end_turn"),
+    ])  # fmt: skip
+    monkeypatch.setattr(llm, "call", call)
+
+    first = await service.chat_message(db, "ws", "Show me orders by store, and what changes without test accounts",
+                                       mode="explore")  # fmt: skip
+    assert first["mode"] == "explore" and len(first["steps"]) == 2 and first["lessons"] == []
+    by_store, no_test = first["steps"]
+    assert by_store["vega_lite"]["data"]["values"] and no_test["candidate_lesson"]["text"].startswith("Exclude test")
+    assert await memory.working_lessons(db, "ws") == []  # exploring learns nothing on its own
+
+    kept = await service.keep_step(db, "ws", by_store["_id"])
+    assert kept["strength"] == 3 and kept["edits"][0]["action"] == "save_template"
+    rejected = await service.reject_step(db, "ws", no_test["_id"])
+    assert rejected["status"] == "rejected" and rejected["weakened_lesson"] is None
+
+    convo = first["conversation_id"]
+    second = await service.chat_message(db, "ws", "What about weekly?", conversation_id=convo)
+    assert second["mode"] == "explore"  # the conversation keeps its mode
+    weekly = await service.keep_step(db, "ws", second["steps"][0]["_id"])
+    third = await service.chat_message(db, "ws", "Weekly again please", conversation_id=convo)
+    assert third["steps"][0]["reinforced_lesson"] == weekly["_id"]
+    lessons = {x["_id"]: x for x in await memory.working_lessons(db, "ws")}
+    assert lessons[weekly["_id"]]["strength"] == 4  # kept (3) + came back to it (1)
+
+    weak = await memory.remember(db, "ws", convo, "m_x", "Maybe look at coupons.",
+                                 [Edit(action="add_rule", target="coupons", payload={"text": "Check coupons."},
+                                       rationale="r", source="m_x")], kind="repeated")  # fmt: skip
+    assert weak["strength"] == 1
+
+    view = by_store["title"].lower().replace(" ", "_")
+    final = {"journal": "Kept the store view and weekly trends.",
+             "edits": [{**kept["edits"][0], "source": kept["_id"]}, {**weekly["edits"][0], "source": weekly["_id"]}],
+             "decisions": [{"source": kept["_id"], "outcome": "applied", "reason": "kept by reader"},
+                           {"source": weekly["_id"], "outcome": "applied", "reason": "kept and repeated"}]}  # fmt: skip
+    call, calls = fake_llm([([tool("dream", final)], "tool_use")])
+    monkeypatch.setattr(llm, "call", call)
+    dreamt = await service.run_dream(db, "ws")
+    brief = calls[0]["messages"][0]["content"]
+    assert "coupons" not in brief  # weak lessons never reach the dream
+    h = await store.latest(db, "ws")
+    assert h.preferences.time_grain == "week" and h.knowledge.templates[0].id == view
+    assert [w["_id"] for w in dreamt["waiting"]] == [weak["_id"]] and dreamt["faded"] == []
+
+    again = await service.run_dream(db, "ws")  # nothing reinforced the weak lesson, so it fades
+    assert again["journal"] == "Nothing new to consolidate." and [f["_id"] for f in again["faded"]] == [weak["_id"]]
+    statuses = {x["_id"]: x["status"] for x in await memory.all_lessons(db, "ws")}
+    assert statuses == {kept["_id"]: "consolidated", weekly["_id"]: "consolidated", weak["_id"]: "faded"}
