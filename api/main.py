@@ -279,3 +279,41 @@ async def get_job(job_id: str) -> dict:
     if not job:
         raise HTTPException(404, "No such job")
     return out(job)
+
+
+# Simulations (scored runs written by scripts/simulate.py)
+
+
+@app.get("/simulations")
+async def list_simulations() -> list[dict]:
+    """Every scored run: company, run label, quarters scored per mode."""
+    rows = await (
+        await get_db().scorecards.aggregate(
+            [
+                {"$match": {"stage": "review"}},
+                {
+                    "$group": {
+                        "_id": {"company": "$company", "run": "$run", "mode": "$mode"},
+                        "quarters": {"$sum": 1},
+                        "last": {"$max": "$created_at"},
+                    }
+                },  # fmt: skip
+                {"$sort": {"last": -1}},
+            ]
+        )
+    ).to_list()
+    return out([{**r["_id"], "quarters": r["quarters"], "updated_at": r["last"]} for r in rows])
+
+
+@app.get("/simulations/{company}/{run}")
+async def get_simulation(company: str, run: str) -> dict:
+    """Scores by quarter for each mode, plus what each round of feedback changed and whether it was kept."""
+    db = get_db()
+    cards = await db.scorecards.find(
+        {"company": company, "run": run, "stage": "review"}, {"_id": 0}, sort=[("cycle", 1)]
+    ).to_list()
+    if not cards:
+        raise HTTPException(404, "No such simulation")
+    cycles = await db.cycles.find({"run": run, "workspace_id": f"{company}_sim_feedback_{run}"}, {"_id": 0},
+                                  sort=[("cycle", 1)]).to_list()  # fmt: skip
+    return out({"company": company, "run": run, "scorecards": cards, "feedback_rounds": cycles})

@@ -14,7 +14,25 @@
         "start": "2024-04-01",
         "end": "2024-06-30"
       },
-      "direction": "down"
+      "direction": "down",
+      "match": {
+        "metrics": [
+          "revenue",
+          "sales",
+          "margin",
+          "profit",
+          "order"
+        ],
+        "directions": [
+          "down",
+          "anomaly"
+        ],
+        "terms": [
+          [
+            "seattle"
+          ]
+        ]
+      }
     },
     {
       "id": "online_satisfaction_drop",
@@ -27,7 +45,24 @@
         "start": "2025-03-01",
         "end": "2025-12-31"
       },
-      "direction": "down"
+      "direction": "down",
+      "match": {
+        "metrics": [
+          "satisf",
+          "rating",
+          "csat",
+          "score"
+        ],
+        "directions": [
+          "down",
+          "anomaly"
+        ],
+        "terms": [
+          [
+            "online"
+          ]
+        ]
+      }
     },
     {
       "id": "london_coupon_spike",
@@ -40,7 +75,28 @@
         "start": "2023-11-01",
         "end": "2023-12-31"
       },
-      "direction": "up"
+      "direction": "up",
+      "match": {
+        "metrics": [
+          "coupon",
+          "promo",
+          "discount",
+          "order value",
+          "basket",
+          "quantity",
+          "unit"
+        ],
+        "directions": [
+          "up",
+          "down",
+          "anomaly"
+        ],
+        "terms": [
+          [
+            "london"
+          ]
+        ]
+      }
     },
     {
       "id": "austin_laptop_surge",
@@ -54,7 +110,29 @@
         "start": "2025-07-01",
         "end": "2025-12-31"
       },
-      "direction": "up"
+      "direction": "up",
+      "match": {
+        "metrics": [
+          "unit",
+          "quantity",
+          "volume",
+          "revenue",
+          "sales",
+          "margin"
+        ],
+        "directions": [
+          "up",
+          "anomaly"
+        ],
+        "terms": [
+          [
+            "austin"
+          ],
+          [
+            "laptop"
+          ]
+        ]
+      }
     },
     {
       "id": "denver_test_accounts",
@@ -67,7 +145,30 @@
         "start": "2024-08-01",
         "end": "2024-08-31"
       },
-      "direction": "anomaly"
+      "direction": "anomaly",
+      "match": {
+        "metrics": [
+          "revenue",
+          "sales",
+          "margin",
+          "order",
+          "count"
+        ],
+        "directions": [
+          "up",
+          "anomaly"
+        ],
+        "terms": [
+          [
+            "denver"
+          ]
+        ],
+        "resolved_by_exclusion": {
+          "customer": {
+            "email": "qa+001@test.example.com"
+          }
+        }
+      }
     },
     {
       "id": "low_margin_mix_shift",
@@ -83,7 +184,17 @@
         "start": "2025-01-01",
         "end": "2025-12-31"
       },
-      "direction": "down"
+      "direction": "down",
+      "match": {
+        "metrics": [
+          "margin",
+          "profit"
+        ],
+        "directions": [
+          "down"
+        ],
+        "terms": []
+      }
     }
   ]
 }

@@ -1,4 +1,4 @@
-.PHONY: api smoke test lint build-data report baseline rounds verify-data
+.PHONY: simulate proof api smoke test lint build-data report baseline rounds verify-data
 
 smoke:  ## Phase 0: ping Atlas and make one dummy LLM call
 	uv run python -m scripts.smoke
@@ -27,3 +27,9 @@ verify-data:
 
 api:  ## Serve the API at http://localhost:8000 (docs at /docs)
 	uv run uvicorn api.main:app --reload --port 8000
+
+simulate:  ## make simulate COMPANY=co_retail RUN=r1 [MODE=feedback|baseline|both] [RESUME=1]
+	uv run python -m scripts.simulate --company $(COMPANY) --run $(or $(RUN),r1) --mode $(or $(MODE),both) $(if $(RESUME),--resume)
+
+proof:  ## make proof COMPANY=co_retail RUN=r1
+	uv run python -m scripts.proof_chart --company $(COMPANY) --run $(or $(RUN),r1)

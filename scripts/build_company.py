@@ -48,6 +48,11 @@ PLANTED = [
         "segment": {"storeLocation": "Seattle"},
         "period": {"start": "2024-04-01", "end": "2024-06-30"},
         "direction": "down",
+        "match": {
+            "metrics": ["revenue", "sales", "margin", "profit", "order"],
+            "directions": ["down", "anomaly"],
+            "terms": [["seattle"]],
+        },
     },
     {
         "id": "online_satisfaction_drop",
@@ -56,6 +61,11 @@ PLANTED = [
         "segment": {"purchaseMethod": "Online"},
         "period": {"start": "2025-03-01", "end": "2025-12-31"},
         "direction": "down",
+        "match": {
+            "metrics": ["satisf", "rating", "csat", "score"],
+            "directions": ["down", "anomaly"],
+            "terms": [["online"]],
+        },
     },
     {
         "id": "london_coupon_spike",
@@ -64,6 +74,11 @@ PLANTED = [
         "segment": {"storeLocation": "London"},
         "period": {"start": "2023-11-01", "end": "2023-12-31"},
         "direction": "up",
+        "match": {
+            "metrics": ["coupon", "promo", "discount", "order value", "basket", "quantity", "unit"],
+            "directions": ["up", "down", "anomaly"],
+            "terms": [["london"]],
+        },
     },
     {
         "id": "austin_laptop_surge",
@@ -72,6 +87,11 @@ PLANTED = [
         "segment": {"storeLocation": "Austin", "items.name": "laptop"},
         "period": {"start": "2025-07-01", "end": "2025-12-31"},
         "direction": "up",
+        "match": {
+            "metrics": ["unit", "quantity", "volume", "revenue", "sales", "margin"],
+            "directions": ["up", "anomaly"],
+            "terms": [["austin"], ["laptop"]],
+        },
     },
     {
         "id": "denver_test_accounts",
@@ -80,6 +100,12 @@ PLANTED = [
         "segment": {"storeLocation": "Denver"},
         "period": {"start": "2024-08-01", "end": "2024-08-31"},
         "direction": "anomaly",
+        "match": {
+            "metrics": ["revenue", "sales", "margin", "order", "count"],
+            "directions": ["up", "anomaly"],
+            "terms": [["denver"]],
+            "resolved_by_exclusion": {"customer": {"email": "qa+001@test.example.com"}},
+        },
     },
     {
         "id": "low_margin_mix_shift",
@@ -88,6 +114,7 @@ PLANTED = [
         "segment": {"items.name": list(LOW_MARGIN)},
         "period": {"start": "2025-01-01", "end": "2025-12-31"},
         "direction": "down",
+        "match": {"metrics": ["margin", "profit"], "directions": ["down"], "terms": []},
     },
 ]
 
@@ -174,11 +201,16 @@ def build(write: bool = True) -> str:
         coll.insert_many(docs)
         coll.create_index("saleDate")
         coll.create_index("storeLocation")
-        BENCH.mkdir(parents=True, exist_ok=True)
-        key = {"company": COMPANY, "seed": SEED, "content_hash": digest, "findings": PLANTED}
-        (BENCH / "planted.json").write_text(json.dumps(key, indent=2) + "\n")
         print(f"Wrote {len(docs)} sales to {COMPANY}.sales (hash {digest[:12]})")
+    write_key(digest)
     return digest
+
+
+def write_key(digest: str) -> None:
+    """The answer key: planted stories and how a report finding is matched to each."""
+    BENCH.mkdir(parents=True, exist_ok=True)
+    key = {"company": COMPANY, "seed": SEED, "content_hash": digest, "findings": PLANTED}
+    (BENCH / "planted.json").write_text(json.dumps(key, indent=2) + "\n")
 
 
 if __name__ == "__main__":
