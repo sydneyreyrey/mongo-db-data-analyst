@@ -565,7 +565,7 @@
     "/companies/{workspace_id}/chat": {
       "post": {
         "summary": "Chat",
-        "description": "Send a message about a report. Costs money. Waits for the reply (usually 5 to 40 seconds).\n\nThe reply may include `learned`: changes saved to the notebook right away, each undoable.",
+        "description": "Send a message about a report. Costs money. Waits for the reply (usually 5 to 40 seconds).\n\nThe reply may include `lessons`: kept in working memory, applied at once in every conversation, and made\npermanent at the next dream. Each can be forgotten before then.",
         "operationId": "chat_companies__workspace_id__chat_post",
         "parameters": [
           {
@@ -685,6 +685,231 @@
                     "additionalProperties": true
                   },
                   "title": "Response List Messages Conversations  Conversation Id  Messages Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{workspace_id}/memory": {
+      "get": {
+        "summary": "Get Memory",
+        "description": "Working memory (lessons waiting for a dream), a long-term memory summary, and the last dream. Free.",
+        "operationId": "get_memory_companies__workspace_id__memory_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Memory Companies  Workspace Id  Memory Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{workspace_id}/memory/lessons": {
+      "get": {
+        "summary": "List Lessons",
+        "description": "Every lesson ever learned for this company, with what happened to it. Free.",
+        "operationId": "list_lessons_companies__workspace_id__memory_lessons_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Lessons Companies  Workspace Id  Memory Lessons Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{workspace_id}/memory/{lesson_id}": {
+      "delete": {
+        "summary": "Forget Lesson",
+        "description": "Forget a lesson before it is made permanent. Free.",
+        "operationId": "forget_lesson_companies__workspace_id__memory__lesson_id__delete",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          },
+          {
+            "name": "lesson_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Lesson Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Forget Lesson Companies  Workspace Id  Memory  Lesson Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{workspace_id}/dream": {
+      "post": {
+        "summary": "Run Dream",
+        "description": "Consolidate working memory into long-term memory. Costs money. Poll GET /jobs/{id}; result is the dream.",
+        "operationId": "run_dream_companies__workspace_id__dream_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Run Dream Companies  Workspace Id  Dream Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/companies/{workspace_id}/dreams": {
+      "get": {
+        "summary": "List Dreams",
+        "description": "Every dream, newest first: journal, decisions per lesson, edits, and the version it produced. Free.",
+        "operationId": "list_dreams_companies__workspace_id__dreams_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Dreams Companies  Workspace Id  Dreams Get"
                 }
               }
             }

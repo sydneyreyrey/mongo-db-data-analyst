@@ -1,9 +1,9 @@
 """Chat mode: talk with the analyst about a report; it answers and learns in real time.
 
 Each reply can do two things: answer the reader (checking the data with read only tools), and, when the
-reader says how they want analysis done from now on, record that in the harness immediately with the
-`learn` tool. Learned edits are validated exactly like Reflect's and saved as a new harness version that
-every later reply and report uses.
+reader says how they want analysis done from now on, keep it as a lesson in working memory with the `learn`
+tool. Lessons are validated exactly like Reflect's edits and apply right away in every conversation; they
+become permanent (the harness, which reports read) when the analyst dreams.
 """
 
 import json
@@ -30,7 +30,8 @@ When they ask a question, answer it, checking the data with the read only tools 
 
 When a message tells you how they want analysis done from now on (what to include or exclude, which metrics
 matter, what a term means, goals, time grain, views to keep or stop), record it right away with the `learn`
-tool, then confirm in one short sentence what you will do differently. Edits are permanent until changed.
+tool as a lesson, then confirm in one short sentence what you will do differently. Lessons apply at once and
+become permanent the next time you dream.
 Do not learn from questions, small talk, reactions, or one-off requests ("just this time"). If you cannot
 tell whether they mean it permanently, ask before learning. Check field names and real values with the
 tools before writing filters or pipelines.
@@ -48,25 +49,22 @@ class LearnEdit(BaseModel):
 
 
 class LearnInput(BaseModel):
+    lesson: str = Field(min_length=1, description="The lesson in one plain sentence, e.g. 'Exclude test accounts.'")
     edits: list[LearnEdit]
 
 
 LEARN_TOOL = {
     "name": "learn",
-    "description": "Record how the reader wants analysis done from now on, as playbook edits. Saved immediately.",
+    "description": "Keep a lesson about how the reader wants analysis done from now on, with the playbook edits "
+    "that express it. Applies immediately; made permanent at the next dream.",
     "input_schema": LearnInput.model_json_schema(),
 }
 CHAT_TOOLS = [t for t in TOOLS if t["name"] != "submit_report"] + [LEARN_TOOL]
 
 
-class Learned(BaseModel):
-    edits: list[Edit]
-    version: int
-
-
 class Reply(BaseModel):
     text: str
-    learned: list[Learned]
+    lessons: list[dict]
     usage: list[llm.Usage]
 
     @property
@@ -90,23 +88,30 @@ def context_message(report_doc: dict | None, pointing_at: dict | None) -> str:
 
 async def chat(
     harness: Harness,
+    working_note: str,
     make_data: Callable[[Harness], CompanyData],
     history: list[dict[str, str]],
     message: str,
     message_id: str,
     report_doc: dict | None,
     pointing_at: dict | None,
-    save: Callable[[Harness, list[Edit]], Awaitable[Harness]],
+    remember: Callable[[str, list[Edit]], Awaitable[dict]],
     meter: llm.CostMeter,
 ) -> Reply:
-    """One reader message in, one reply out. `save` persists learned edits and returns the new harness."""
+    """One reader message in, one reply out.
+
+    `harness` is the working view (long-term memory plus working lessons). `remember` stores a new lesson in
+    working memory and returns it.
+    """
     settings = get_settings()
     system = [*render(harness), {"type": "text", "text": CHAT_INSTRUCTIONS}]
+    if working_note:
+        system.insert(-1, {"type": "text", "text": working_note})
     data = make_data(harness)
     context = context_message(report_doc, pointing_at)
     messages: list[dict[str, Any]] = [{"role": m["role"], "content": m["text"]} for m in history if m.get("text")]
     messages.append({"role": "user", "content": f"{context}\n\nReader: {message}" if context else message})
-    learned: list[Learned] = []
+    lessons: list[dict] = []
     usage: list[llm.Usage] = []
 
     for _ in range(MAX_TURNS):
@@ -127,24 +132,24 @@ async def chat(
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         if not tool_uses:
             text = "".join(b.text for b in response.content if b.type == "text").strip()
-            return Reply(text=text, learned=learned, usage=usage)
+            return Reply(text=text, lessons=lessons, usage=usage)
 
         results = []
         for block in tool_uses:
             ok = True
             if block.name == "learn":
                 try:
-                    edits = [
-                        Edit(**e.model_dump(), source=message_id) for e in LearnInput.model_validate(block.input).edits
-                    ]
-                    await _check(data, harness, Proposal(edits=edits), {message_id}, set())
+                    learn = LearnInput.model_validate(block.input)
+                    edits = [Edit(**e.model_dump(), source=message_id) for e in learn.edits]
+                    updated = await _check(data, harness, Proposal(edits=edits), {message_id}, set())
                 except (ValidationError, ValueError) as e:
                     ok, text = False, str(e)
                 else:
-                    harness = await save(harness, edits)
-                    data = make_data(harness)  # later queries in this reply see the new exclusions
-                    learned.append(Learned(edits=edits, version=harness.version))
-                    text = f"Saved as playbook v{harness.version}."
+                    lesson = await remember(learn.lesson, edits)
+                    lessons.append(lesson)
+                    harness = updated.model_copy(update={"version": harness.version})
+                    data = make_data(harness)  # later queries in this reply already follow the lesson
+                    text = "Kept in working memory; it applies now and becomes permanent at the next dream."
             else:
                 try:
                     text = await run_tool(data, block.name, block.input)

@@ -8,6 +8,15 @@ Built for the "Recursive Harnessing" challenge. MongoDB Atlas holds both the com
 
 One agent, two modes. Each **cycle** is one quarterly review with an `as_of` date; the analyst cannot see data after it. In **Analyze** mode the Analyst explores the company data through read only tools and submits a structured **Report**: findings (metric, segment, period, size, the pipeline that proves it, a chart) and the status of every active **Objective**. The manager (scripted for scoring, or a real person in the UI) leaves **Comments**: corrections, preferences, new goals, and reactions to findings ("keep this", "stop showing this"). In **Reflect** mode the same agent turns comments and off track objectives into typed **Harness** edits. Plain code applies them as a new harness version, which every later report uses. The **Scorekeeper** (plain code) scores each report; a round of edits that makes the next score drop is reverted.
 
+## Memory
+
+Modeled on human memory, all in MongoDB:
+
+* **Working memory** (`working_memory`): lessons learned in chat. Applied at once in every conversation for that company, never read by reports.
+* **Dreaming** (`dreams`): consolidation. Reviews working lessons, pending comments, off-track objectives, and recent reports; keeps, merges, or drops each lesson with a reason; writes a journal; saves one new harness version (`created_by: dream`). A button in the demo; a nightly schedule in production.
+* **Long-term memory** (`harness_versions`): the harness. Reports read only this.
+* **Episodic memory** (`reports`, `conversations`, `messages`).
+
 ## Companies (workspaces)
 
 | Workspace | Business | Built from |

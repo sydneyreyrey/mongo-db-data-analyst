@@ -143,11 +143,15 @@ def text(t):
     return SimpleNamespace(type="text", text=t)
 
 
-EXCLUDE = {"edits": [{"action": "add_exclusion", "target": "test_accounts", "rationale": "reader asked",
+EXCLUDE = {"lesson": "Exclude test accounts (@test.example.com).",
+           "edits": [{"action": "add_exclusion", "target": "test_accounts", "rationale": "reader asked",
                       "payload": {"filter": {"customer.email": {"$regex": "@test\\.example\\.com$"}},
                                   "reason": "QA accounts"}}]}  # fmt: skip
-BAD = {"edits": [{"action": "add_exclusion", "target": "nothing", "rationale": "x",
-                  "payload": {"filter": {"customer.email": "nobody@nowhere"}, "reason": "x"}}]}  # fmt: skip
+WEEKLY = {"lesson": "Show trends weekly.",
+          "edits": [{"action": "set_preference", "target": "time_grain", "rationale": "r",
+                     "payload": {"value": "week"}}]}  # fmt: skip
+BAD = {"lesson": "Exclude nobody.", "edits": [{"action": "add_exclusion", "target": "nothing", "rationale": "x",
+       "payload": {"filter": {"customer.email": "nobody@nowhere"}, "reason": "x"}}]}  # fmt: skip
 
 
 @pytest.fixture
@@ -160,8 +164,8 @@ async def memory_db():
 
 
 @needs_atlas
-async def test_chat_learns_stores_and_undoes(monkeypatch, memory_db):
-    from analyst import service
+async def test_chat_keeps_lessons_in_working_memory_until_dream(monkeypatch, memory_db):
+    from analyst import memory, service
     from harness import store
 
     db = memory_db
@@ -170,26 +174,71 @@ async def test_chat_learns_stores_and_undoes(monkeypatch, memory_db):
         ([tool("learn", EXCLUDE)], "tool_use"),
         ([text("Got it. I will leave out @test.example.com accounts from now on.")], "end_turn"),
         ([tool("learn", BAD)], "tool_use"),
-        ([text("I could not find any matching accounts, so I did not change anything.")], "end_turn"),
+        ([text("I could not find any matching accounts, so I did not keep that.")], "end_turn"),
+        ([tool("learn", WEEKLY)], "tool_use"),
+        ([text("Weekly from now on.")], "end_turn"),
     ])  # fmt: skip
     monkeypatch.setattr(llm, "call", call)
 
     first = await service.chat_message(db, "ws", "Exclude test accounts, anything @test.example.com")
-    assert first["reply"].startswith("Got it") and first["harness_version"] == 2
-    assert first["learned"][0]["edits"][0]["source"] == first["message_id"]
-    h = await store.latest(db, "ws")
-    assert h.knowledge.exclusions[0].id == "test_accounts"
+    assert first["reply"].startswith("Got it") and first["lessons"][0]["text"].startswith("Exclude test")
+    assert first["harness_version"] == 1  # long-term memory unchanged until a dream
+    assert (await store.latest(db, "ws")).knowledge.exclusions == []
+    lesson = (await memory.working_lessons(db, "ws"))[0]
+    assert lesson["edits"][0]["source"] == first["message_id"] and lesson["status"] == "working"
 
     second = await service.chat_message(
         db, "ws", "Also exclude nobody@nowhere", conversation_id=first["conversation_id"]
     )
-    assert second["learned"] == [] and second["harness_version"] == 2
+    assert second["lessons"] == []
     assert "matches no documents" in calls[3]["messages"][-1]["content"][0]["content"]
-    # The second turn saw the first exchange as history.
-    assert calls[2]["messages"][1]["content"].startswith("Got it")
+    # Working memory is applied in the next conversation turn: the playbook it sees includes the exclusion.
+    system_text = " ".join(b["text"] for b in calls[2]["system"])
+    assert "test_accounts" in system_text and "Working memory" in system_text
+    assert calls[2]["messages"][1]["content"].startswith("Got it")  # it saw the earlier exchange
+
+    third = await service.chat_message(db, "ws", "Show me weekly from now on")
+    assert third["working_memory"] == 2
+    forgotten = await memory.forget(db, "ws", third["lessons"][0]["_id"])
+    assert forgotten["status"] == "forgotten" and len(await memory.working_lessons(db, "ws")) == 1
 
     msgs = await db.messages.find({"conversation_id": first["conversation_id"]}).to_list()
     assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
 
-    restored, undone = await store.undo(db, "ws", 2, 0)
-    assert undone.target == "test_accounts" and restored.knowledge.exclusions == [] and restored.version == 3
+
+@needs_atlas
+async def test_dream_consolidates_working_memory(monkeypatch, memory_db):
+    from analyst import memory, service
+    from harness import store
+
+    db = memory_db
+    await service.connect(db, "ws", "co_retail")
+    call, _ = fake_llm([
+        ([tool("learn", EXCLUDE)], "tool_use"), ([text("Noted.")], "end_turn"),
+        ([tool("learn", WEEKLY)], "tool_use"), ([text("Weekly it is.")], "end_turn"),
+    ])  # fmt: skip
+    monkeypatch.setattr(llm, "call", call)
+    a = await service.chat_message(db, "ws", "Exclude test accounts")
+    b = await service.chat_message(db, "ws", "Weekly please")
+    lesson_a, lesson_b = a["lessons"][0]["_id"], b["lessons"][0]["_id"]
+
+    keep = {"action": "add_exclusion", "target": "test_accounts", "rationale": "consolidated", "source": lesson_a,
+            "payload": EXCLUDE["edits"][0]["payload"]}  # fmt: skip
+    missing_decision = {"edits": [keep], "decisions": [], "journal": "j"}
+    final = {"edits": [keep], "journal": "I learned to ignore QA accounts. I let the weekly request go for now.",
+             "decisions": [{"source": lesson_a, "outcome": "applied", "reason": "holds up in the data"},
+                           {"source": lesson_b, "outcome": "dropped", "reason": "one-off"}]}  # fmt: skip
+    call, calls = fake_llm(
+        [([tool("dream", missing_decision)], "tool_use"), ([tool("dream", final, "t2")], "tool_use")]
+    )
+    monkeypatch.setattr(llm, "call", call)
+
+    dreamt = await service.run_dream(db, "ws")
+    assert "Give a decision" in calls[1]["messages"][-1]["content"][0]["content"]  # it had to fix its first try
+    assert dreamt["from_version"] == 1 and dreamt["to_version"] == 2 and dreamt["journal"].startswith("I learned")
+    h = await store.latest(db, "ws")
+    assert h.knowledge.exclusions[0].source == lesson_a and h.preferences.time_grain == "month"
+    statuses = {x["_id"]: x["status"] for x in await memory.all_lessons(db, "ws")}
+    assert statuses == {lesson_a: "consolidated", lesson_b: "dropped"}
+    assert (await service.memory_view(db, "ws"))["working"] == []
+    assert (await service.run_dream(db, "ws"))["journal"] == "Nothing new to consolidate."

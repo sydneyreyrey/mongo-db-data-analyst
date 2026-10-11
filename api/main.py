@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pymongo import DESCENDING
 
-from analyst import service
+from analyst import memory, service
 from analyst.data import to_jsonable
 from api import jobs
 from common.db import get_client, get_db
@@ -239,13 +239,15 @@ class ChatBody(BaseModel):
 async def chat(workspace_id: str, body: ChatBody) -> dict:
     """Send a message about a report. Costs money. Waits for the reply (usually 5 to 40 seconds).
 
-    The reply may include `learned`: changes saved to the notebook right away, each undoable.
+    The reply may include `lessons`: kept in working memory, applied at once in every conversation, and made
+    permanent at the next dream. Each can be forgotten before then.
     """
     await workspace_or_404(workspace_id)
     if not body.message.strip():
         raise HTTPException(400, "Message is empty")
-    if await get_db().jobs.find_one({"workspace_id": workspace_id, "status": "running", "kind": "reflect"}):
-        raise HTTPException(409, "A reflect job is running for this company")
+    running = {"workspace_id": workspace_id, "status": "running", "kind": {"$in": ["reflect", "dream"]}}
+    if await get_db().jobs.find_one(running):
+        raise HTTPException(409, "The analyst is reflecting or dreaming; try again when it finishes")
     try:
         return out(await service.chat_message(get_db(), workspace_id, **body.model_dump()))
     except KeyError as e:
@@ -266,6 +268,48 @@ async def list_messages(conversation_id: str) -> list[dict]:
     if not await get_db().conversations.find_one({"_id": conversation_id}):
         raise HTTPException(404, "No such conversation")
     docs = await get_db().messages.find({"conversation_id": conversation_id}, sort=[("created_at", 1)]).to_list()
+    return out(docs)
+
+
+# Memory: working memory (lessons from chat) and dreaming (making them permanent)
+
+
+@app.get("/companies/{workspace_id}/memory")
+async def get_memory(workspace_id: str) -> dict:
+    """Working memory (lessons waiting for a dream), a long-term memory summary, and the last dream. Free."""
+    await workspace_or_404(workspace_id)
+    return out(await service.memory_view(get_db(), workspace_id))
+
+
+@app.get("/companies/{workspace_id}/memory/lessons")
+async def list_lessons(workspace_id: str) -> list[dict]:
+    """Every lesson ever learned for this company, with what happened to it. Free."""
+    await workspace_or_404(workspace_id)
+    return out(await memory.all_lessons(get_db(), workspace_id))
+
+
+@app.delete("/companies/{workspace_id}/memory/{lesson_id}")
+async def forget_lesson(workspace_id: str, lesson_id: str) -> dict:
+    """Forget a lesson before it is made permanent. Free."""
+    await workspace_or_404(workspace_id)
+    try:
+        return out(await memory.forget(get_db(), workspace_id, lesson_id))
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+
+
+@app.post("/companies/{workspace_id}/dream", status_code=202)
+async def run_dream(workspace_id: str) -> dict:
+    """Consolidate working memory into long-term memory. Costs money. Poll GET /jobs/{id}; result is the dream."""
+    await workspace_or_404(workspace_id)
+    return await start_job("dream", workspace_id, lambda: service.run_dream(get_db(), workspace_id))
+
+
+@app.get("/companies/{workspace_id}/dreams")
+async def list_dreams(workspace_id: str) -> list[dict]:
+    """Every dream, newest first: journal, decisions per lesson, edits, and the version it produced. Free."""
+    await workspace_or_404(workspace_id)
+    docs = await get_db().dreams.find({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)]).to_list()
     return out(docs)
 
 

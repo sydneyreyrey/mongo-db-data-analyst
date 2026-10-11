@@ -11,11 +11,12 @@ from bson import ObjectId
 from pymongo import ASCENDING, DESCENDING
 from pymongo.asynchronous.database import AsyncDatabase
 
-from analyst import reports
+from analyst import memory, reports
 from analyst.agent import analyze
 from analyst.chat import chat
 from analyst.compare import compare
 from analyst.data import CompanyData
+from analyst.dream import dream
 from analyst.onboard import detect_time_fields
 from analyst.reflect import Comment, reflect
 from common import llm
@@ -153,7 +154,7 @@ async def chat_message(
     finding_id: str | None = None,
     template_id: str | None = None,
 ) -> dict:
-    """Send one reader message. The reply may include changes the analyst learned and saved immediately."""
+    """Send one reader message. The reply may include lessons kept in working memory (permanent at the next dream)."""
     ws = await store.get_workspace(db, workspace_id)
     lock = _chat_locks.setdefault(workspace_id, asyncio.Lock())
     async with lock:
@@ -184,7 +185,9 @@ async def chat_message(
              "text": message, "finding_id": finding_id, "template_id": template_id, "created_at": datetime.now(UTC)}
         )  # fmt: skip
 
-        harness = await store.latest(db, workspace_id)
+        long_term = await store.latest(db, workspace_id)
+        lessons = await memory.working_lessons(db, workspace_id)
+        harness, _ = memory.working_view(long_term, lessons)
         pointing_at = None
         if finding_id and report_doc:
             pointing_at = next((f for f in report_doc["report"]["findings"] if f["id"] == finding_id), None)
@@ -197,16 +200,18 @@ async def chat_message(
             return CompanyData(get_client()[ws["company_db"]], h, as_of=_end_of(as_of) if as_of else None,
                                time_fields=ws.get("time_fields", {}))  # fmt: skip
 
-        async def save(_h, edits):
-            return await store.apply_edits(db, await store.latest(db, workspace_id), edits, created_by="chat")
+        async def remember(text, edits):
+            return await memory.remember(db, workspace_id, conversation_id, message_id, text, edits)
 
         meter = llm.CostMeter(limit_usd=get_settings().max_usd)
-        reply = await chat(harness, make_data, history, message, message_id, report_doc, pointing_at, save, meter)
+        note = memory.working_memory_note(lessons)
+        reply = await chat(harness, note, make_data, history, message, message_id, report_doc, pointing_at, remember,
+                           meter)  # fmt: skip
         reply_id = f"m_{ObjectId()}"
-        learned = [{"version": item.version, "edits": [e.model_dump() for e in item.edits]} for item in reply.learned]
+        new_lessons = [{k: lesson[k] for k in ("_id", "text", "edits", "status")} for lesson in reply.lessons]
         await db.messages.insert_one(
             {"_id": reply_id, "conversation_id": conversation_id, "workspace_id": workspace_id, "role": "assistant",
-             "text": reply.text or "Done.", "learned": learned, "cost_usd": reply.cost_usd,
+             "text": reply.text or "Done.", "lessons": new_lessons, "cost_usd": reply.cost_usd,
              "created_at": datetime.now(UTC)}
         )  # fmt: skip
         return {
@@ -214,10 +219,86 @@ async def chat_message(
             "message_id": message_id,
             "reply_id": reply_id,
             "reply": reply.text or "Done.",
-            "learned": learned,
-            "harness_version": (await store.latest(db, workspace_id)).version,
+            "lessons": new_lessons,
+            "working_memory": len(lessons) + len(new_lessons),
+            "harness_version": long_term.version,
             "cost_usd": reply.cost_usd,
         }
+
+
+# Memory and dreaming
+
+
+async def memory_view(db: AsyncDatabase, workspace_id: str) -> dict:
+    """Working memory (lessons waiting for a dream), long-term memory (the notebook), and the last dream."""
+    await store.get_workspace(db, workspace_id)
+    long_term = await store.latest(db, workspace_id)
+    k = long_term.knowledge
+    last_dream = await db.dreams.find_one({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)])
+    return {
+        "working": await memory.working_lessons(db, workspace_id),
+        "long_term": {
+            "version": long_term.version,
+            "counts": {
+                "rules": len(k.rules), "focus_metrics": len(k.focus_metrics), "exclusions": len(k.exclusions),
+                "objectives": len(k.objectives), "vocabulary": len(k.vocabulary),
+                "saved_views_on": sum(t.status == "on" for t in k.templates),
+            },
+            "preferences": long_term.preferences.model_dump(),
+        },
+        "last_dream": last_dream,
+    }  # fmt: skip
+
+
+async def run_dream(db: AsyncDatabase, workspace_id: str) -> dict:
+    """Consolidate working memory (and pending comments, off-track goals) into a new long-term version."""
+    ws = await store.get_workspace(db, workspace_id)
+    long_term = await store.latest(db, workspace_id)
+    lessons = await memory.working_lessons(db, workspace_id)
+    comments = await list_comments(db, workspace_id, status="pending")
+    recent = await db.reports.find({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)]).to_list(3)
+    as_of = date.fromisoformat(recent[0]["as_of"]) if recent and recent[0].get("as_of") else None
+    data = CompanyData(get_client()[ws["company_db"]], long_term, as_of=_end_of(as_of) if as_of else None,
+                       time_fields=ws.get("time_fields", {}))  # fmt: skip
+    meter = llm.CostMeter(limit_usd=get_settings().max_usd)
+
+    result = await dream(long_term, data, lessons, comments, recent, meter)
+    dream_id = f"dream_{ObjectId()}"
+    to_version = long_term.version
+    changes: list[str] = []
+    if result.edits:
+        new = await store.apply_edits(db, long_term, result.edits, created_by="dream")
+        to_version, changes = new.version, diff(long_term, new)
+    decisions = {d.source: d for d in result.decisions}
+    for lesson in lessons:
+        d = decisions.get(lesson["_id"])
+        status = "dropped" if d and d.outcome == "dropped" else "consolidated"
+        await db.working_memory.update_one(
+            {"_id": lesson["_id"]},
+            {"$set": {"status": status, "dream_id": dream_id, "outcome": d.outcome if d else "applied",
+                      "reason": d.reason if d else "", "consolidated_in_version": to_version}},
+        )  # fmt: skip
+    if comments:
+        await db.comments.update_many(
+            {"_id": {"$in": [c["_id"] for c in comments]}},
+            {"$set": {"status": "applied", "applied_in_version": to_version, "dream_id": dream_id}},
+        )
+    doc = {
+        "_id": dream_id,
+        "workspace_id": workspace_id,
+        "created_at": datetime.now(UTC),
+        "journal": result.journal,
+        "from_version": long_term.version,
+        "to_version": to_version,
+        "lessons_reviewed": len(lessons),
+        "comments_reviewed": len(comments),
+        "decisions": [d.model_dump() for d in result.decisions],
+        "edits": [e.model_dump() for e in result.edits],
+        "diff": changes,
+        "cost_usd": result.cost_usd,
+    }
+    await db.dreams.insert_one(doc)
+    return doc
 
 
 async def compare_reports(db: AsyncDatabase, report_a: str, report_b: str) -> dict:

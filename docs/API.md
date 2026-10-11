@@ -1,6 +1,20 @@
 # Recursive Analyst API
 
-Everything the web app needs: connect or upload a company, run reports, chat with the analyst while it learns, compare report versions, undo anything it learned, and show how scores moved.
+Everything the web app needs: connect or upload a company, run reports, chat with the analyst while it learns, let it dream (turn what it learned into long-term memory), compare report versions, and show how scores moved.
+
+## How the analyst's memory works
+
+It works like a person's memory, and all of it lives in MongoDB:
+
+| Memory | What it is | Collection |
+|---|---|---|
+| Working memory | Lessons picked up in chat. Used right away in every conversation, not yet permanent. | `working_memory` |
+| Dreaming | Consolidation: reviews the lessons, pending comments, off-track goals, and recent reports; keeps, merges, or drops each lesson; writes a journal. | `dreams` |
+| Long-term memory | The notebook (harness). Reports only read this, so new reports change after a dream. Every version is kept. | `harness_versions` |
+| Episodic memory | What happened: reports and conversations. | `reports`, `conversations`, `messages` |
+
+In production, dreaming would run on a schedule (for example nightly, with a cron job or an Atlas Scheduled
+Trigger calling `POST /companies/{id}/dream`). In the demo it is a Dream button.
 
 * Base URL (local): `http://localhost:8000`
 * Interactive docs: `http://localhost:8000/docs` (try every call in the browser)
@@ -16,15 +30,16 @@ make api   # serves on http://localhost:8000
 
 Needs `.env` with `MONGODB_URI` and `ANTHROPIC_API_KEY` (see `.env.example`).
 
-## Costs: three endpoints spend money
+## Costs: four endpoints spend money
 
-Only these calls use the AI model. Everything else (including compare and undo) is free.
+Only these calls use the AI model. Everything else (memory, compare, undo, forget) is free.
 
 | Call | What it does | Typical cost |
 |---|---|---|
 | `POST /companies/{id}/reports` | The analyst explores the data and writes a report | $0.06 to $0.15 |
-| `POST /companies/{id}/chat` | One chat message: the analyst answers and may learn | $0.01 to $0.08 |
-| `POST /companies/{id}/reflect` | Batch: turns pending comments into notebook changes | $0.01 to $0.05 |
+| `POST /companies/{id}/chat` | One chat message: the analyst answers and may keep a lesson | $0.01 to $0.08 |
+| `POST /companies/{id}/dream` | Turns working memory into long-term memory | $0.02 to $0.08 |
+| `POST /companies/{id}/reflect` | Older batch version of dreaming, used by the simulator | $0.01 to $0.05 |
 
 Consider a confirm step in the UI before these, and avoid calling them on page load.
 
@@ -34,15 +49,16 @@ Consider a confirm step in the UI before these, and avoid calling them on page l
 1. Pick or create a company     GET /companies   |  POST /companies/upload  |  POST /companies
 2. Run a report                 POST /companies/{id}/reports  -> job, poll GET /jobs/{job_id}
 3. Show the report              GET /reports/{report_id}  (or GET /companies/{id}/reports/latest)
-4. Chat about it                POST /companies/{id}/chat   (it answers, and learns as you go)
-5. Show what it learned         the chat reply's `learned` list, each with an Undo button
-                                POST /companies/{id}/harness/undo
-6. Run the next report          back to step 2; it uses everything learned so far
-7. Compare report versions      GET /reports/compare?a={older}&b={newer}
+4. Chat about it                POST /companies/{id}/chat   (it answers, and keeps lessons as you go)
+5. Show working memory          the reply's `lessons`, and GET /companies/{id}/memory
+                                (each lesson can be forgotten: DELETE /companies/{id}/memory/{lesson_id})
+6. Dream                        POST /companies/{id}/dream  -> job; show the journal and what changed
+7. Run the next report          back to step 2; it now uses what the dream made permanent
+8. Compare report versions      GET /reports/compare?a={before dream}&b={after dream}
 ```
 
-The older batch flow (post comments, then `reflect`) still works and is what the simulator uses; chat is the
-better fit for a live UI.
+The older batch flow (post comments, then `reflect`) still works and is what the simulator uses. A dream also
+picks up any pending comments, so comments posted without chatting are not lost.
 
 ## Slow calls are background jobs
 
@@ -225,15 +241,16 @@ Usually returns in 5 to 40 seconds (longer if it has to look at the data). No jo
   "message_id": "m_6acc...",           // the user's message
   "reply_id": "m_6acc...",             // the analyst's reply
   "reply": "Got it. From now on I will leave out @test.example.com accounts; they are 40 sales in August 2024.",
-  "learned": [
-    { "version": 3,
+  "lessons": [
+    { "_id": "lesson_6acc...", "status": "working", "text": "Exclude test accounts (@test.example.com).",
       "edits": [ { "action": "add_exclusion", "target": "test_accounts",
                    "payload": { "filter": { "customer.email": { "$regex": "@test\\.example\\.com$" } },
                                 "reason": "QA accounts inflate revenue" },
                    "rationale": "Reader asked to exclude test accounts.",
                    "source": "m_6acc..." } ] }
   ],
-  "harness_version": 3,
+  "working_memory": 1,                 // lessons now waiting for the next dream
+  "harness_version": 1,                // long-term memory version; unchanged until a dream
   "cost_usd": 0.021
 }
 ```
@@ -242,16 +259,16 @@ How the analyst decides:
 
 * A question ("why is Denver down?") gets an answer, checked against the data. Nothing is learned.
 * An instruction for the future ("exclude test accounts", "I care about margin", "show me weekly",
-  "keep this chart", "stop showing this") is saved to the notebook immediately and confirmed in the reply.
-  `learned` lists exactly what changed and the notebook version it created.
-* Something ambiguous gets a clarifying question back instead of a change.
-* A change that does not check out against the data (for example a filter that matches nothing) is not
-  saved; the reply says so.
+  "keep this chart", "stop showing this") becomes a lesson in working memory and is confirmed in the reply.
+  It applies at once in every conversation for this company, and becomes permanent at the next dream.
+* Something ambiguous gets a clarifying question back instead of a lesson.
+* A lesson that does not check out against the data (for example a filter that matches nothing) is not
+  kept; the reply says so.
 
-Show each `learned` edit as a chip or card ("Now excludes: test accounts") with an Undo button that calls
-`POST /companies/{id}/harness/undo` with that `version` and the edit's index in `edits`. The labels table in
-the reflect section works for chat edits too. Returns `409` while a reflect job runs for the same company,
-`404` for an unknown conversation or report, `400` for an empty message.
+Show each lesson as a chip ("Working memory: Exclude test accounts") with a Forget button
+(`DELETE /companies/{id}/memory/{lesson_id}`). Reports do not use working memory until the analyst dreams.
+Returns `409` while a reflect or dream job runs for the same company, `404` for an unknown conversation or
+report, `400` for an empty message.
 
 ### `GET /companies/{id}/conversations`
 
@@ -260,7 +277,72 @@ Newest first: `[{ "_id": "conv_...", "workspace_id", "report_id", "created_at" }
 ### `GET /conversations/{conversation_id}/messages`
 
 Oldest first. User messages: `{ "_id", "role": "user", "text", "finding_id", "template_id", "created_at" }`.
-Replies: `{ "_id", "role": "assistant", "text", "learned": [...], "cost_usd", "created_at" }`.
+Replies: `{ "_id", "role": "assistant", "text", "lessons": [...], "cost_usd", "created_at" }`.
+
+---
+
+## Memory and dreaming
+
+### `GET /companies/{id}/memory` (free)
+
+```json
+{
+  "working": [ { "_id": "lesson_6acc...", "text": "Exclude test accounts (@test.example.com).", "status": "working",
+                 "conversation_id": "conv_...", "message_id": "m_...", "edits": [ "..." ], "created_at": "..." } ],
+  "long_term": { "version": 1,
+                 "counts": { "rules": 0, "focus_metrics": 0, "exclusions": 0, "objectives": 0, "vocabulary": 0,
+                             "saved_views_on": 0 },
+                 "preferences": { "time_grain": "month", "max_findings": 5, "chart_style": "" } },
+  "last_dream": null
+}
+```
+
+Good for a memory panel: working memory on one side (with Forget buttons), long-term on the other, and the
+Dream button between them.
+
+### `GET /companies/{id}/memory/lessons` (free)
+
+Every lesson ever learned, oldest first, with what happened to it: `status` is `working`, `consolidated`
+(made permanent), `dropped` (the dream decided not to keep it, see `reason`), or `forgotten` (removed by the
+user). Consolidated and dropped lessons carry `dream_id`, `outcome`, `reason`, and `consolidated_in_version`.
+
+### `DELETE /companies/{id}/memory/{lesson_id}` (free)
+
+Forget a lesson before it is made permanent. Returns the lesson with `status: "forgotten"`. `404` if it is
+not in working memory (already consolidated, dropped, or forgotten).
+
+### `POST /companies/{id}/dream` (costs money, background job)
+
+No body. The analyst reviews working memory, pending comments, objectives that are off track, and its three
+most recent reports, then updates long-term memory. Poll `GET /jobs/{job_id}`; the result is the dream:
+
+```json
+{
+  "_id": "dream_6acc...",
+  "journal": "I learned that test accounts were inflating Denver, so I now exclude them everywhere. I switched to weekly trends as asked. I did not keep the request to hide London coupons as an exclusion; I will stop reporting on that promo instead.",
+  "from_version": 1,
+  "to_version": 2,
+  "lessons_reviewed": 3,
+  "comments_reviewed": 0,
+  "decisions": [
+    { "source": "lesson_6acc...", "outcome": "applied", "reason": "Holds up: 40 sales match." },
+    { "source": "lesson_6acd...", "outcome": "merged",  "reason": "Same as the weekly lesson." },
+    { "source": "lesson_6ace...", "outcome": "dropped", "reason": "One-off request." }
+  ],
+  "edits": [ { "action": "add_exclusion", "target": "test_accounts", "...": "..." } ],
+  "diff": [ "+ knowledge.exclusions[test_accounts]: {...}" ],
+  "cost_usd": 0.034
+}
+```
+
+Show the `journal` prominently (it is the analyst explaining what it learned overnight), the `decisions` next
+to each lesson, and the `edits` as labeled changes (labels table below). If there is nothing new, the
+result has no edits and `journal: "Nothing new to consolidate."`; `to_version` equals `from_version`.
+After a dream, run a new report; compare it with the report before the dream to show the effect.
+
+### `GET /companies/{id}/dreams` (free)
+
+Every dream, newest first, same shape as above. A good "dream journal" page.
 
 ---
 
@@ -396,7 +478,7 @@ The full notebook. Sections: `identity`, `knowledge` (`collections`, `vocabulary
 
 ### `GET /companies/{id}/harness/versions`
 
-The notebook's history, oldest first: `[{ "version", "parent_version", "edits": [...], "created_by", "created_at" }]`. `created_by` is `seed` (blank start), `chat`, `reflect`, `undo:vN#i`, or `revert:vN`. Good for a timeline view.
+The notebook's history, oldest first: `[{ "version", "parent_version", "edits": [...], "created_by", "created_at" }]`. `created_by` is `seed` (blank start), `dream`, `reflect`, `undo:vN#i`, or `revert:vN`. Good for a timeline view.
 
 ### `GET /companies/{id}/harness/diff?from_version=1&to_version=2`
 
@@ -406,7 +488,7 @@ The notebook's history, oldest first: `[{ "version", "parent_version", "edits": 
 
 Lines start with `+` (added), `-` (removed), or `~` (changed). Technical; use version `edits` for friendly text.
 
-### `POST /companies/{id}/harness/undo`: undo one learned change (free)
+### `POST /companies/{id}/harness/undo`: undo one change in long-term memory (free)
 
 ```json
 { "version": 3, "edit_index": 0 }
@@ -471,7 +553,7 @@ Errors are `{ "detail": "message" }`.
 |---|---|
 | `400` | Bad input: empty comment, bad CSV, protected database |
 | `404` | Unknown company, report, job, harness version, or simulation |
-| `409` | A report or reflect job is already running for this company (chat is blocked only by reflect) |
+| `409` | A job is already running for this company (chat is blocked only by reflect or dream) |
 | `422` | Body does not match the schema (the response lists which field) |
 
 ## TypeScript types
@@ -524,15 +606,34 @@ export type Edit = {
   action: string; target: string; payload: Record<string, unknown>; rationale: string; source: string;
 };
 
+export type Lesson = {
+  _id: string; text: string; edits: Edit[]; created_at?: string; conversation_id?: string; message_id?: string;
+  status: "working" | "consolidated" | "dropped" | "forgotten";
+  dream_id?: string; outcome?: "applied" | "merged" | "dropped"; reason?: string; consolidated_in_version?: number;
+};
+
 export type ChatReply = {
   conversation_id: string; message_id: string; reply_id: string; reply: string;
-  learned: { version: number; edits: Edit[] }[]; harness_version: number; cost_usd: number;
+  lessons: Lesson[]; working_memory: number; harness_version: number; cost_usd: number;
+};
+
+export type Memory = {
+  working: Lesson[];
+  long_term: { version: number; counts: Record<string, number>; preferences: Record<string, unknown> };
+  last_dream: Dream | null;
+};
+
+export type Dream = {
+  _id: string; journal: string; from_version: number; to_version: number; created_at: string;
+  lessons_reviewed: number; comments_reviewed: number;
+  decisions: { source: string; outcome: "applied" | "merged" | "dropped"; reason: string }[];
+  edits: Edit[]; diff: string[]; cost_usd: number;
 };
 
 export type Message = {
   _id: string; role: "user" | "assistant"; text: string; created_at: string;
   finding_id?: string | null; template_id?: string | null;
-  learned?: { version: number; edits: Edit[] }[]; cost_usd?: number;
+  lessons?: Lesson[]; cost_usd?: number;
 };
 
 export type Comparison = {
@@ -563,5 +664,5 @@ export type Scorecard = {
 
 * For a clean live demo on the retail data, connect a fresh workspace: `POST /companies {"company_db": "co_retail", "workspace_id": "co_retail_live"}`. It starts with a blank notebook.
 * Use `as_of` (for example `2024-09-30`) so the story fits a point in time; the retail data runs from 2021 to 2025.
-* Chat messages that show learning well on retail: "Exclude test accounts, anything with an @test.example.com email", "I care about margin, not revenue", "Show me trends week by week". Then run a new report with the same `as_of` and open the comparison.
+* A demo arc on retail: run a report (`as_of` `2024-09-30`), chat "Exclude test accounts, anything with an @test.example.com email", "I care about margin, not revenue", "Show me trends week by week", press Dream and show the journal, run a new report with the same `as_of`, then open the comparison.
 * A question that shows it answering without learning: "Why did Denver jump in August?"

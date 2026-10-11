@@ -5,6 +5,7 @@ validated against the harness and the data before they are accepted; problems go
 """
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
@@ -160,6 +161,60 @@ async def _check(
     return h
 
 
+async def propose_loop(
+    role: str,
+    system: list[dict],
+    brief: str,
+    data: CompanyData,
+    tools: list[dict],
+    finish_tool: str,
+    accept: Callable[[dict], Awaitable[Any]],
+    meter: llm.CostMeter,
+) -> tuple[Any, list[llm.Usage], int]:
+    """Let the model use read only tools, then call `finish_tool`. `accept` validates its input and returns the
+    result, or raises ValueError / ValidationError, which goes back to the model to fix."""
+    settings = get_settings()
+    messages: list[dict[str, Any]] = [{"role": "user", "content": brief}]
+    usage: list[llm.Usage] = []
+    for turn in range(1, MAX_TURNS + 1):
+        response, u = await llm.call(
+            role,
+            meter,
+            model=settings.analyst_model,
+            max_tokens=16000,
+            output_config={"effort": "medium"},
+            system=system,
+            tools=tools,
+            messages=messages,
+        )
+        usage.append(u)
+        messages.append({"role": "assistant", "content": response.content})
+        if response.stop_reason == "refusal":
+            raise ReflectFailed(f"Model refused: {getattr(response, 'stop_details', None)}")
+        tool_uses = [b for b in response.content if b.type == "tool_use"]
+        if not tool_uses:
+            messages.append({"role": "user", "content": f"Call {finish_tool} when you are ready."})
+            continue
+        results = []
+        for block in tool_uses:
+            ok = True
+            if block.name == finish_tool:
+                try:
+                    return await accept(block.input), usage, turn
+                except ValidationError as e:
+                    ok, text = False, f"Input does not match the schema: {e}"
+                except ValueError as e:
+                    ok, text = False, str(e)
+            else:
+                try:
+                    text = await run_tool(data, block.name, block.input)
+                except Exception as e:  # noqa: BLE001  (query errors go back to the model)
+                    ok, text = False, f"{type(e).__name__}: {e}"
+            results.append({"type": "tool_result", "tool_use_id": block.id, "content": text, "is_error": not ok})
+        messages.append({"role": "user", "content": results})
+    raise ReflectFailed(f"No valid {finish_tool} after {MAX_TURNS} turns")
+
+
 async def reflect(
     harness: Harness,
     data: CompanyData,
@@ -167,7 +222,6 @@ async def reflect(
     comments: list[Comment],
     meter: llm.CostMeter,
 ) -> Reflection:
-    settings = get_settings()
     off_track = [
         o["objective_id"] for o in report_doc["report"].get("objectives", []) if o["status"] in ("off_track", "missed")
     ]
@@ -181,48 +235,12 @@ async def reflect(
         "new_comments": [c.model_dump(exclude_none=True) for c in comments],
         "off_track_objectives": off_track,
     }
-    messages: list[dict[str, Any]] = [{"role": "user", "content": json.dumps(brief, default=str, indent=1)}]
-    usage: list[llm.Usage] = []
 
-    for turn in range(1, MAX_TURNS + 1):
-        response, u = await llm.call(
-            "reflect",
-            meter,
-            model=settings.analyst_model,
-            max_tokens=16000,
-            output_config={"effort": "medium"},
-            system=system,
-            tools=REFLECT_TOOLS,
-            messages=messages,
-        )
-        usage.append(u)
-        messages.append({"role": "assistant", "content": response.content})
-        if response.stop_reason == "refusal":
-            raise ReflectFailed(f"Model refused: {getattr(response, 'stop_details', None)}")
-        tool_uses = [b for b in response.content if b.type == "tool_use"]
-        if not tool_uses:
-            messages.append({"role": "user", "content": "Call propose_edits with your edits and notes."})
-            continue
+    async def accept(payload: dict) -> tuple[Proposal, Harness]:
+        proposal = Proposal.model_validate(payload)
+        return proposal, await _check(data, harness, proposal, sources, {c.id for c in comments})
 
-        results = []
-        for block in tool_uses:
-            ok = True
-            if block.name == "propose_edits":
-                try:
-                    proposal = Proposal.model_validate(block.input)
-                    new = await _check(data, harness, proposal, sources, {c.id for c in comments})
-                except ValidationError as e:
-                    ok, text = False, f"Proposal does not match the schema: {e}"
-                except ValueError as e:
-                    ok, text = False, str(e)
-                else:
-                    return Reflection(edits=proposal.edits, notes=proposal.notes, harness=new, usage=usage, turns=turn)
-            else:
-                try:
-                    text = await run_tool(data, block.name, block.input)
-                except Exception as e:  # noqa: BLE001  (query errors go back to the model)
-                    ok, text = False, f"{type(e).__name__}: {e}"
-            results.append({"type": "tool_result", "tool_use_id": block.id, "content": text, "is_error": not ok})
-        messages.append({"role": "user", "content": results})
-
-    raise ReflectFailed(f"No valid proposal after {MAX_TURNS} turns")
+    (proposal, new), usage, turns = await propose_loop(
+        "reflect", system, json.dumps(brief, default=str, indent=1), data, REFLECT_TOOLS, "propose_edits", accept, meter
+    )
+    return Reflection(edits=proposal.edits, notes=proposal.notes, harness=new, usage=usage, turns=turns)
