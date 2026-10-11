@@ -56,9 +56,7 @@ async def latest(db: AsyncDatabase, workspace_id: str) -> Harness:
     return Harness.model_validate(doc["harness"])
 
 
-async def apply_edits(
-    db: AsyncDatabase, base: Harness, edits: list[Edit], created_by: str = "reflect"
-) -> Harness:
+async def apply_edits(db: AsyncDatabase, base: Harness, edits: list[Edit], created_by: str = "reflect") -> Harness:
     """Apply a round of edits to `base` and save the result as one new version.
 
     Every edit is validated; if any one is invalid or touches a locked field, nothing is saved.

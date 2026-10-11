@@ -25,8 +25,7 @@ def render(h: Harness) -> list[dict]:
     sections = [
         _section(
             "Identity",
-            [f"Role: {h.identity.role}", f"Audience: {h.identity.audience}"]
-            + [f"- {v}" for v in h.identity.values],
+            [f"Role: {h.identity.role}", f"Audience: {h.identity.audience}"] + [f"- {v}" for v in h.identity.values],
         ),
         _section("Collections", [f"- {name}: {note}" for name, note in sorted(k.collections.items())]),
         _section("Vocabulary", [f"- {term}: {t.definition}" for term, t in sorted(k.vocabulary.items())]),

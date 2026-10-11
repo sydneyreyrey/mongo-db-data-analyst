@@ -75,9 +75,7 @@ def main() -> None:
                 "$sum": {
                     "$sum": {
                         "$map": {
-                            "input": {
-                                "$filter": {"input": "$items", "cond": {"$eq": ["$$this.name", "laptop"]}}
-                            },
+                            "input": {"$filter": {"input": "$items", "cond": {"$eq": ["$$this.name", "laptop"]}}},
                             "in": "$$this.quantity",
                         }
                     }

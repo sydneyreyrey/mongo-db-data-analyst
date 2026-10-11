@@ -102,9 +102,7 @@ def apply_edit(harness: Harness, edit: Edit) -> Harness:
             if t not in Preferences.model_fields:
                 raise InvalidEdit(f"Unknown preference {t!r}")
             try:
-                new.preferences = Preferences.model_validate(
-                    {**new.preferences.model_dump(), t: _require(p, "value")}
-                )
+                new.preferences = Preferences.model_validate({**new.preferences.model_dump(), t: _require(p, "value")})
             except ValidationError as e:
                 raise InvalidEdit(f"Invalid value for {t!r}: {e.errors()[0]['msg']}") from e
 

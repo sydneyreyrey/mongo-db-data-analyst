@@ -37,18 +37,11 @@ class Usage(BaseModel):
     latency_s: float
 
 
-def cost_usd(
-    model: str, input_tokens: int, output_tokens: int, cache_read: int = 0, cache_write: int = 0
-) -> float:
+def cost_usd(model: str, input_tokens: int, output_tokens: int, cache_read: int = 0, cache_write: int = 0) -> float:
     if model not in PRICES:
         raise ValueError(f"No price for model {model!r}; add it to common.llm.PRICES")
     inp, out, read = PRICES[model]
-    total = (
-        input_tokens * inp
-        + output_tokens * out
-        + cache_read * read
-        + cache_write * inp * CACHE_WRITE_MULTIPLIER
-    )
+    total = input_tokens * inp + output_tokens * out + cache_read * read + cache_write * inp * CACHE_WRITE_MULTIPLIER
     return round(total / 1_000_000, 6)
 
 

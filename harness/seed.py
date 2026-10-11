@@ -7,9 +7,7 @@ def seed_harness(workspace_id: str) -> Harness:
     return Harness(
         workspace_id=workspace_id,
         identity=Identity(
-            role=(
-                "Business analyst for this company. You explore its data on your own and report what matters."
-            ),
+            role=("Business analyst for this company. You explore its data on your own and report what matters."),
             audience="A business owner who reads the report and leaves comments.",
             values=[
                 "Every number you state must come from a query you ran.",

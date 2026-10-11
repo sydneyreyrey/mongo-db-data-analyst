@@ -20,9 +20,7 @@ def base() -> Harness:
     h = apply_edit(h, edit("add_rule", "r1", {"text": "old rule"}))
     h = apply_edit(h, edit("set_vocab", "aov", {"definition": "average order value"}))
     h = apply_edit(h, edit("set_focus_metric", "revenue", {"definition": "sum of price x qty"}))
-    h = apply_edit(
-        h, edit("add_exclusion", "x1", {"filter": {"storeLocation": "X"}, "reason": "closed store"})
-    )
+    h = apply_edit(h, edit("add_exclusion", "x1", {"filter": {"storeLocation": "X"}, "reason": "closed store"}))
     return h
 
 
@@ -151,9 +149,7 @@ async def test_store_round_trip_in_atlas():
         assert len(await store.version_diff(db, "ws_test", 1, 2)) == 2
 
         with pytest.raises(InvalidEdit):  # a bad edit in a round saves nothing
-            await store.apply_edits(
-                db, v2, [edit("add_rule", "r", {"text": "ok"}), edit("retire_rule", "nope")]
-            )
+            await store.apply_edits(db, v2, [edit("add_rule", "r", {"text": "ok"}), edit("retire_rule", "nope")])
         assert (await store.latest(db, "ws_test")).version == 2
 
         v3 = await store.revert_to(db, "ws_test", 1)

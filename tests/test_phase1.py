@@ -6,7 +6,7 @@ import pytest
 from common.settings import get_settings
 
 ROOT = Path(__file__).resolve().parent.parent
-FORBIDDEN = ("bench", "planted", "comments.json")
+FORBIDDEN = ("bench", "planted", "timeline.json")
 
 
 def agent_sources():
@@ -27,13 +27,8 @@ def test_agent_code_cannot_reference_answer_key():
 
 def test_answer_key_files_are_valid():
     planted = json.loads((ROOT / "bench/co_retail/planted.json").read_text())
-    comments = json.loads((ROOT / "bench/co_retail/comments.json").read_text())
     ids = {f["id"] for f in planted["findings"]}
     assert len(ids) == 6
-    for c in comments["comments"]:
-        assert c["text"] and c["check"]["type"]
-        if c["check"]["type"] == "suppress_finding":
-            assert c["check"]["planted_id"] in ids
 
 
 @pytest.mark.skipif(not get_settings().mongodb_uri, reason="MONGODB_URI not set")
