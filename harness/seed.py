@@ -2,6 +2,21 @@
 
 from harness.schema import Harness, Identity, Output, Policy
 
+DEFAULT_FORM = (
+    "A short summary, then findings ranked by importance. Each finding states the metric, segment, period, "
+    "direction and size, why it matters, the pipeline that proves it, and a chart where it helps."
+)
+
+# Report formats written before this default existed. Anything else was set by a reader.
+OLD_DEFAULT_FORMS = (
+    "A short summary, then findings ranked by importance. Each finding states the metric, segment, period, "
+    "direction and size, why it matters, the pipeline that proves it, and a chart.",
+)
+
+
+def has_custom_format(form: str) -> bool:
+    return form.strip() not in (DEFAULT_FORM, *OLD_DEFAULT_FORMS)
+
 
 def seed_harness(workspace_id: str) -> Harness:
     return Harness(
@@ -16,11 +31,5 @@ def seed_harness(workspace_id: str) -> Harness:
             ],
         ),
         policy=Policy(scope="Analyze only the company database you are connected to."),
-        output=Output(
-            form=(
-                "A short summary, then findings ranked by importance. Each finding states the metric, "
-                "segment, period, direction and size, why it matters, the pipeline that proves it, "
-                "and a chart."
-            )
-        ),
+        output=Output(form=DEFAULT_FORM),
     )

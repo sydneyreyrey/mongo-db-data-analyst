@@ -64,6 +64,7 @@ CASES = [
     (edit("set_template_status", "t1", {"status": "off"}), "~ knowledge.templates[t1]"),
     (edit("enable_tool", "forecast"), "~ capabilities.tools_enabled"),
     (edit("disable_tool", "detect_spikes"), "- capabilities.tools_enabled"),
+    (edit("set_report_format", "report", {"format": "Open with this month vs last month."}), "~ output.form"),
 ]
 
 
@@ -116,6 +117,8 @@ def test_locked_targets_raise(base, target):
         edit("set_template_status", "missing", {"status": "off"}),
         edit("enable_tool", "shell_access"),
         edit("disable_tool", "forecast"),
+        edit("set_report_format", "output", {"format": "x"}),
+        edit("set_report_format", "report", {}),
     ],
     ids=lambda e: f"{e.action}:{e.target}",
 )
@@ -136,7 +139,7 @@ def test_prompt_renders_in_slot_order_with_cache_breakpoint(base):
         "## Rules",
         "## Preferences",
         "## Policy",
-        "## Output",
+        "## Report format",
     ]
     positions = [text.index(h) for h in order]
     assert positions == sorted(positions)

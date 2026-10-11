@@ -183,7 +183,7 @@ async def test_templates_run_only_when_on():
     h = apply_edit(seed_harness("t"), Edit(action="save_template", target="t1", payload=template, rationale="r",
                                            source="c"))  # fmt: skip
     runs, charts, texts = await run_templates(company(h, as_of=AS_OF), h.knowledge.templates)
-    assert runs[0].ok and "t1" in charts and charts["t1"]["data"]["values"][-1]["_id"] == "2023-12"
+    assert runs[0].ok and "t1" in charts and charts["t1"]["data"]["values"][-1]["_id"] == "2023-12-01"
     off = apply_edit(h, Edit(action="set_template_status", target="t1", payload={"status": "off"}, rationale="r",
                              source="c2"))  # fmt: skip
     assert await run_templates(company(off, as_of=AS_OF), off.knowledge.templates) == ([], {}, [])

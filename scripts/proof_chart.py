@@ -32,7 +32,7 @@ VERBS = {
     "remove_exclusion": "Stopped excluding",
     "set_preference": "Changed setting", "set_objective": "New goal", "retire_objective": "Retired goal",
     "save_template": "Saved view", "set_template_status": "Switched view", "enable_tool": "Enabled tool",
-    "disable_tool": "Disabled tool",
+    "disable_tool": "Disabled tool", "set_report_format": "New report format",
 }  # fmt: skip
 
 

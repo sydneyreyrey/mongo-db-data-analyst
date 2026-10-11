@@ -38,6 +38,8 @@ def undo_edit(current: Harness, before: Harness, edit: Edit) -> Harness:
     t = edit.target
     if edit.action == "set_preference":
         cur["preferences"][t] = old["preferences"][t]
+    elif edit.action == "set_report_format":
+        cur["output"]["form"] = old["output"]["form"]
     elif edit.action in ("enable_tool", "disable_tool"):
         tools = [x for x in cur["capabilities"]["tools_enabled"] if x != t]
         if t in old["capabilities"]["tools_enabled"]:

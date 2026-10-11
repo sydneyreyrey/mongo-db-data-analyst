@@ -28,13 +28,16 @@ EDIT_GUIDE = """Edit actions (target, then payload):
 - add_rule / retire_rule: rule id; {"text"}
 - set_focus_metric / remove_focus_metric: metric name; {"definition": exact computation}
 - add_exclusion / remove_exclusion: exclusion id; {"filter": MongoDB filter on raw documents, "reason"}
-- set_preference: time_grain (day, week, month, quarter) | max_findings (1-10) | chart_style; {"value"}
+- set_preference: time_grain (day, week, month, quarter) | max_findings (1-10) | chart_style |
+  writing_style (simple, standard, technical; use when the reader asks for simpler or more detailed writing); {"value"}
 - set_objective / retire_objective: objective id; {"text", "metric": exact computation, "target": number,
   "direction": "at_least" | "at_most", "deadline": "YYYY-MM-DD"}
 - save_template: template id; {"name", "description", "pipeline": {"collection", "stages"},
   "chart": {"type": line | bar | area | point, "x", "y", "color" (optional), "title", "x_label", "y_label",
   "color_label" (if color), "y_format": number | currency | percent}}; titles and labels in plain words
-- set_template_status: template id; {"status": "on" | "off"}"""
+- set_template_status: template id; {"status": "on" | "off"}
+- set_report_format: "report"; {"format": how every report should be organized, in the reader's words, e.g.
+  what to open with, which sections in which order, what to compare against}"""
 
 REFLECT_INSTRUCTIONS = (
     """You maintain the playbook above. You are now in Reflect mode, not writing a report.

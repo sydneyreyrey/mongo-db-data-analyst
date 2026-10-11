@@ -59,6 +59,7 @@ CHANGES = [
     edit("disable_tool", "forecast"),
     edit("enable_tool", "detect_spikes"),
     edit("annotate_collection", "sales", {"note": "n"}),
+    edit("set_report_format", "report", {"format": "Open with the month being closed."}),
 ]
 
 

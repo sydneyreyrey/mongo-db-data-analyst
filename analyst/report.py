@@ -15,17 +15,19 @@ class Period(BaseModel):
 
 
 class Finding(BaseModel):
+    """One section of the report, in the order the report format asks for."""
+
     id: str = Field(description="Short slug, e.g. west_region_revenue_drop")
-    title: str
-    why_it_matters: str
+    title: str = Field(description="The section's heading: a short plain sentence saying what happened")
+    why_it_matters: str = Field(description="The section's text: at most three short sentences with the key numbers")
     metric: str = Field(description="What is measured, e.g. revenue, margin, rating, signups")
     segment: dict[str, Any] = Field(description='Where it happens, e.g. {"region": "West"}; {} if overall')
     period: Period
-    direction: Literal["up", "down", "anomaly"]
+    direction: Literal["up", "down", "flat", "anomaly"]
     magnitude: float = Field(description="Relative change vs the comparison baseline, e.g. -0.45")
     dollar_impact: float | None = Field(default=None, description="Estimated dollars at stake, if known")
-    pipeline: Pipeline = Field(description="Pipeline whose output proves the finding and feeds the chart")
-    chart: Chart
+    pipeline: Pipeline = Field(description="Pipeline whose output proves this section's numbers (and feeds its chart)")
+    chart: Chart | None = Field(default=None, description="A chart only where it helps; omit it otherwise")
 
 
 class ObjectiveStatus(BaseModel):
@@ -51,9 +53,31 @@ class Report(BaseModel):
     title: str = Field(description="A concrete name for this report that states its main point, not a generic label")
     focus: Focus
     summary: str
-    findings: list[Finding]
+    findings: list[Finding] = Field(description="The report's sections, in the order the report format asks for")
+    format_followed: list[str] = Field(
+        default=[],
+        description="If the playbook has a report format from the reader: one line per instruction in it, saying how "
+        "this report follows it",
+    )
     objectives: list[ObjectiveStatus] = Field(default=[], description="One entry per active objective")
     applied: Applied
+
+
+MONTH = re.compile(r"^\d{4}-\d{2}$")  # 2024-08
+PERIOD = re.compile(r"^\d{4}-?(W\d{1,2}|Q[1-4])$", re.IGNORECASE)  # 2024-W35, 2024-Q3
+
+
+def _normalize_periods(rows: list[dict], field: str) -> str | None:
+    """Make period labels chartable in time order. Returns 'month', 'period', or None if not period-like."""
+    values = [r.get(field) for r in rows if r.get(field) is not None]
+    if values and all(isinstance(v, str) and MONTH.match(v) for v in values):
+        for r in rows:
+            if isinstance(r.get(field), str):
+                r[field] = f"{r[field]}-01"  # first of the month: a real date the chart puts in order
+        return "month"
+    if values and all(isinstance(v, str) and PERIOD.match(v) for v in values):
+        return "period"
+    return None
 
 
 def _vl_type(values: list[Any]) -> str:
@@ -105,18 +129,25 @@ def chart_problems(chart: Chart, rows: list[dict] | None = None) -> list[str]:
 def vega_lite(chart: Chart, rows: list[dict]) -> dict:
     """Build a Vega-Lite spec whose data is the finding's own pipeline output, labeled in plain words."""
     rows = [{k: v for k, v in r.items() if k in {chart.x, chart.y, chart.color}} for r in rows]
-    x_type = _vl_type([r.get(chart.x) for r in rows])
+    period = _normalize_periods(rows, chart.x)
+    x_type = _vl_type([r.get(chart.x) for r in rows]) if period != "period" else "ordinal"
     x_title = chart.x_label or humanize(chart.x)
     y_title = chart.y_label or humanize(chart.y)
     y_format = FORMATS[chart.y_format]
     x: dict[str, Any] = {"field": chart.x, "type": x_type, "title": x_title}
+    date_format = "%b %Y" if period == "month" or len(rows) <= 24 else "%b %d, %Y"
     if x_type == "temporal":
-        x["axis"] = {"format": "%b %d, %Y" if len(rows) > 24 else "%b %Y", "labelAngle": 0}
+        x["axis"] = {"format": date_format, "labelAngle": 0}
+        if chart.type == "bar":
+            x["timeUnit"] = "yearmonth" if period == "month" else "yearmonthdate"
+    elif x_type == "ordinal":
+        x["sort"] = "ascending"  # time periods always run oldest to newest
+        x["axis"] = {"labelAngle": 0}
     elif x_type == "nominal" and chart.type == "bar":
-        x["sort"] = "-y"  # biggest first
+        x["sort"] = "-y"  # categories: biggest first
         x["axis"] = {"labelAngle": 0}
     tooltip = [
-        {"field": chart.x, "title": x_title, **({"format": "%b %d, %Y"} if x_type == "temporal" else {})},
+        {"field": chart.x, "title": x_title, **({"format": date_format} if x_type == "temporal" else {})},
         {"field": chart.y, "title": y_title, "format": y_format},
     ]
     encoding: dict[str, Any] = {

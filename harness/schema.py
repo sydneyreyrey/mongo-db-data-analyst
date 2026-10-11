@@ -107,6 +107,7 @@ class Preferences(BaseModel):
     time_grain: TimeGrain = "month"
     max_findings: int = Field(default=5, ge=1, le=10)
     chart_style: str = ""
+    writing_style: Literal["simple", "standard", "technical"] = "simple"
 
 
 class Constraints(BaseModel):

@@ -38,7 +38,8 @@ Check field names and values with the read only tools before writing filters or 
 
 Every edit's `source` is the id of the lesson, comment, or objective behind it. Give a decision for every
 lesson and comment id: applied, merged (into another entry), or dropped, with a short reason. Then write a
-journal of 3 to 6 plain sentences: what you learned, what you changed, and what you chose not to keep. Call
+journal of 3 to 6 short sentences in the playbook's writing style: what you learned, what you changed, and what
+you chose not to keep. Call
 `dream` once with everything.
 
 """

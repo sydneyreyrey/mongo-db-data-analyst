@@ -6,6 +6,7 @@ harness version changes, so it carries one cache breakpoint at the end.
 
 import json
 
+from analyst.style import guide
 from harness.schema import Harness
 
 BASE_INSTRUCTIONS = (
@@ -53,9 +54,11 @@ def render(h: Harness) -> list[dict]:
             [
                 f"- Time grain: {h.preferences.time_grain}",
                 f"- At most {h.preferences.max_findings} findings",
+                f"- Writing style: {h.preferences.writing_style}",
             ]
             + ([f"- Chart style: {h.preferences.chart_style}"] if h.preferences.chart_style else []),
         ),
+        _section("How to write (everything a person reads)", [guide(h.preferences.writing_style)]),
         _section(
             "Policy",
             [
@@ -64,7 +67,7 @@ def render(h: Harness) -> list[dict]:
                 f"and time out after {h.policy.constraints.max_time_ms} ms.",
             ],
         ),
-        _section("Output", [h.output.form]),
+        _section("Report format (organize every report this way)", [h.output.form]),
     ]
     playbook = "\n\n".join(s for s in sections if s)
     return [

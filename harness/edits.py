@@ -36,6 +36,7 @@ Action = Literal[
     "set_template_status",
     "enable_tool",
     "disable_tool",
+    "set_report_format",
 ]
 
 # Operators a stored filter or pipeline may not contain (they write, run code, or reach other data).
@@ -162,6 +163,10 @@ def apply_edit(harness: Harness, edit: Edit) -> Harness:
                 raise InvalidEdit(f"{t!r} is not on the tool shelf {list(SHELF_TOOLS)}")
             if t not in new.capabilities.tools_enabled:
                 new.capabilities.tools_enabled.append(t)
+        case "set_report_format":
+            if t != "report":
+                raise InvalidEdit("set_report_format target must be 'report'")
+            new.output.form = _require(p, "format")
         case "disable_tool":
             if t not in new.capabilities.tools_enabled:
                 raise InvalidEdit(f"Tool {t!r} is not enabled")

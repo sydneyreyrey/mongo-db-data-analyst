@@ -26,7 +26,9 @@ def write_html(doc: dict, path: Path) -> None:
             f"<section><h2>{i + 1}. {html.escape(f['title'])}</h2>"
             f"<p class=meta>{html.escape(f['metric'])} · {f['direction']} {f['magnitude']:+.0%}"
             f" · {f['period']['start']} to {f['period']['end']}{impact}</p>"
-            f"<p>{html.escape(f['why_it_matters'])}</p><div id=c{i} class=chart></div></section>"
+            f"<p>{html.escape(f['why_it_matters'])}</p>"
+            + (f"<div id=c{i} class=chart></div>" if f["id"] in doc["charts"] else "")
+            + "</section>"
         )
     for i, t in enumerate(doc.get("template_runs", []), start=len(r["findings"])):
         if t["ok"]:
@@ -41,7 +43,7 @@ def write_html(doc: dict, path: Path) -> None:
     if goals:
         cards.insert(0, f"<section><h2>Goals</h2><ul>{goals}</ul></section>")
     specs = json.dumps(
-        [doc["charts"][f["id"]] for f in r["findings"]]
+        [doc["charts"].get(f["id"]) for f in r["findings"]]
         + [doc["template_charts"][t["id"]] for t in doc.get("template_runs", []) if t["ok"]]
     )
     path.write_text(f"""<!doctype html><meta charset=utf-8>
@@ -55,7 +57,7 @@ section{{border-top:1px solid #ddd;padding:1rem 0}}.meta{{color:#666;font-size:1
 <h1>{html.escape(doc["workspace_id"])}: review as of {doc.get("as_of", "")} (harness v{doc["harness_version"]})</h1>
 <p>{html.escape(r["summary"])}</p>{"".join(cards)}
 <p class=meta>{doc["turns"]} turns · ${doc["cost_usd"]:.2f}</p>
-<script>{specs}.forEach((s,i)=>vegaEmbed('#c'+i,s,{{actions:false}}));</script>
+<script>{specs}.forEach((s,i)=>s&&vegaEmbed('#c'+i,s,{{actions:false}}));</script>
 """)
 
 

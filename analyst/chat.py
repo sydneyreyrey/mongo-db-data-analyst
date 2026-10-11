@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from analyst.agent import SANITY_CHECK
 from analyst.data import CompanyData
 from analyst.prompt_builder import render
 from analyst.reflect import EDIT_GUIDE, Proposal, _check, _report_brief
@@ -28,12 +29,17 @@ from harness.schema import Chart, Harness, Pipeline
 MAX_TURNS = 8
 
 CHAT_INSTRUCTIONS = (
-    """You are now chatting with the reader about your latest report. Reply briefly and directly.
+    """You are now chatting with the reader about your latest report. Reply briefly and directly, in the playbook's
+writing style.
 
 When they ask a question, answer it, checking the data with the read only tools instead of guessing numbers.
+"""
+    + SANITY_CHECK
+    + """
 
 When a message tells you how they want analysis done from now on (what to include or exclude, which metrics
-matter, what a term means, goals, time grain, views to keep or stop), record it right away with the `learn`
+matter, what a term means, goals, time grain, views to keep or stop, how reports should be organized or what
+story they should tell), record it right away with the `learn`
 tool as a lesson, then confirm in one short sentence what you will do differently. Lessons apply at once and
 become permanent the next time you dream.
 Do not learn from questions, small talk, reactions, or one-off requests ("just this time"). If you cannot
@@ -59,8 +65,11 @@ class LearnInput(BaseModel):
 
 EXPLORE_INSTRUCTIONS = (
     """You are exploring the data together with the reader. Nothing you do here changes your memory: the reader
-decides what lands. Reply briefly and let the charts speak.
+decides what lands. Reply briefly, in the playbook's writing style, and let the charts speak.
 
+"""
+    + SANITY_CHECK
+    + """
 Answer their questions and try the what-ifs they ask for ("what if we excluded returns?", "break that down by
 week"), or suggest a useful next one. Check everything with the read only tools. Show each meaningful result
 with the `show` tool: a title, a one sentence summary of what it shows, the pipeline, and a chart a person with
