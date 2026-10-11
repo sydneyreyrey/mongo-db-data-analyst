@@ -1,0 +1,35 @@
+{
+  "company": "co_retail",
+  "comments": [
+    {
+      "id": "c1_exclude_test",
+      "round": 1,
+      "text": "Some of these numbers look inflated. Exclude test accounts, anything with an @test.example.com email.",
+      "check": { "type": "exclusion", "field": "customer.email", "pattern": "@test.example.com" }
+    },
+    {
+      "id": "c2_margin",
+      "round": 1,
+      "text": "I care about margin, not revenue. Revenue growth on products we barely make money on is not good news.",
+      "check": { "type": "focus_metric", "name": "margin" }
+    },
+    {
+      "id": "c3_weekly",
+      "round": 2,
+      "text": "Monthly is too coarse for me. Show trends weekly.",
+      "check": { "type": "preference", "key": "time_grain", "value": "week" }
+    },
+    {
+      "id": "c4_skip_london_promo",
+      "round": 2,
+      "text": "Skip the London coupon thing. That was a planned holiday promo, not a problem.",
+      "check": { "type": "suppress_finding", "planted_id": "london_coupon_spike" }
+    },
+    {
+      "id": "c5_dollar_impact",
+      "round": 3,
+      "text": "Rank findings by dollar impact so the biggest problems are at the top.",
+      "check": { "type": "ordering", "by": "dollar_impact" }
+    }
+  ]
+}

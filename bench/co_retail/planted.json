@@ -1,0 +1,89 @@
+{
+  "company": "co_retail",
+  "seed": 20261011,
+  "content_hash": "f1245f98a5ae5445e82ea5cc67f9a7b2a7480f77a56376749e272b61af73ac14",
+  "findings": [
+    {
+      "id": "seattle_revenue_drop",
+      "title": "Seattle revenue fell by about half in Q2 2024",
+      "metric": "revenue",
+      "segment": {
+        "storeLocation": "Seattle"
+      },
+      "period": {
+        "start": "2024-04-01",
+        "end": "2024-06-30"
+      },
+      "direction": "down"
+    },
+    {
+      "id": "online_satisfaction_drop",
+      "title": "Online customer satisfaction fell from March 2025",
+      "metric": "satisfaction",
+      "segment": {
+        "purchaseMethod": "Online"
+      },
+      "period": {
+        "start": "2025-03-01",
+        "end": "2025-12-31"
+      },
+      "direction": "down"
+    },
+    {
+      "id": "london_coupon_spike",
+      "title": "London coupon use spiked and order size shrank in Nov to Dec 2023",
+      "metric": "coupon_rate",
+      "segment": {
+        "storeLocation": "London"
+      },
+      "period": {
+        "start": "2023-11-01",
+        "end": "2023-12-31"
+      },
+      "direction": "up"
+    },
+    {
+      "id": "austin_laptop_surge",
+      "title": "Austin laptop sales surged in H2 2025",
+      "metric": "units",
+      "segment": {
+        "storeLocation": "Austin",
+        "items.name": "laptop"
+      },
+      "period": {
+        "start": "2025-07-01",
+        "end": "2025-12-31"
+      },
+      "direction": "up"
+    },
+    {
+      "id": "denver_test_accounts",
+      "title": "Test accounts inflated Denver revenue in August 2024",
+      "metric": "revenue",
+      "segment": {
+        "storeLocation": "Denver"
+      },
+      "period": {
+        "start": "2024-08-01",
+        "end": "2024-08-31"
+      },
+      "direction": "anomaly"
+    },
+    {
+      "id": "low_margin_mix_shift",
+      "title": "Low margin products (printer paper, envelopes) grew as a share of sales through 2025",
+      "metric": "margin",
+      "segment": {
+        "items.name": [
+          "printer paper",
+          "envelopes"
+        ]
+      },
+      "period": {
+        "start": "2025-01-01",
+        "end": "2025-12-31"
+      },
+      "direction": "down"
+    }
+  ]
+}
