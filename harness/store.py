@@ -15,17 +15,50 @@ async def ensure_indexes(db: AsyncDatabase) -> None:
     await db.harness_versions.create_index([("workspace_id", ASCENDING), ("version", ASCENDING)], unique=True)
 
 
-async def create_workspace(db: AsyncDatabase, workspace_id: str, company_db: str) -> Harness:
+async def create_workspace(
+    db: AsyncDatabase,
+    workspace_id: str,
+    company_db: str,
+    time_fields: dict[str, str] | None = None,
+    name: str = "",
+    source: str = "",
+) -> Harness:
     """Create a workspace with seed harness v1. Returns the existing latest harness if present."""
     await ensure_indexes(db)
     existing = await db.workspaces.find_one({"_id": workspace_id})
     if existing:
         return await latest(db, workspace_id)
-    now = datetime.now(UTC)
-    await db.workspaces.insert_one({"_id": workspace_id, "company_db": company_db, "created_at": now})
+    await db.workspaces.insert_one(
+        {
+            "_id": workspace_id,
+            "name": name or workspace_id,
+            "company_db": company_db,
+            "time_fields": time_fields or {},
+            "source": source,
+            "created_at": datetime.now(UTC),
+        }
+    )
     harness = seed_harness(workspace_id)
     await _insert(db, harness, edits=[], created_by="seed")
     return harness
+
+
+async def get_workspace(db: AsyncDatabase, workspace_id: str) -> dict:
+    doc = await db.workspaces.find_one({"_id": workspace_id})
+    if not doc:
+        raise KeyError(f"No workspace {workspace_id!r}")
+    return doc
+
+
+async def list_workspaces(db: AsyncDatabase) -> list[dict]:
+    return await db.workspaces.find({}, sort=[("created_at", ASCENDING)]).to_list()
+
+
+async def set_time_fields(db: AsyncDatabase, workspace_id: str, time_fields: dict[str, str]) -> None:
+    """Connection metadata, not learned knowledge: a person confirms or corrects the detected date fields."""
+    result = await db.workspaces.update_one({"_id": workspace_id}, {"$set": {"time_fields": time_fields}})
+    if not result.matched_count:
+        raise KeyError(f"No workspace {workspace_id!r}")
 
 
 async def _insert(db: AsyncDatabase, harness: Harness, edits: list[Edit], created_by: str) -> None:

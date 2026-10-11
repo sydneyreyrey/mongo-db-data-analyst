@@ -10,7 +10,6 @@ from analyst.data import CompanyData
 from analyst.prompt_builder import BASE_INSTRUCTIONS
 from analyst.report import Report
 from analyst.tools import TOOLS
-from common.companies import COMPANIES
 from common.settings import get_settings
 from harness.edits import Edit, apply_edit
 from harness.seed import seed_harness
@@ -68,7 +67,7 @@ def company(harness=None, as_of: datetime | None = None) -> CompanyData:
         get_client()["co_retail"],
         harness or seed_harness("t"),
         as_of=as_of,
-        time_fields=COMPANIES["co_retail"]["time_fields"],
+        time_fields={"sales": "saleDate"},
     )
 
 

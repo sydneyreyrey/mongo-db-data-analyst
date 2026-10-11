@@ -7,17 +7,12 @@ import argparse
 import asyncio
 import html
 import json
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
-from analyst import reports
-from analyst.agent import analyze
-from analyst.data import CompanyData
-from common import llm
-from common.companies import COMPANIES
-from common.db import get_client, get_db
+from analyst import service
+from common.db import get_db
 from common.settings import get_settings
-from harness import store
 
 OUT = Path(__file__).resolve().parent.parent / "out"
 
@@ -67,26 +62,21 @@ section{{border-top:1px solid #ddd;padding:1rem 0}}.meta{{color:#666;font-size:1
 async def main(company: str, as_of: date) -> None:
     settings = get_settings()
     db = get_db()
-    harness = await store.create_workspace(db, company, company)
-    time_fields = COMPANIES[company]["time_fields"]
-    as_of_end = datetime.combine(as_of, datetime.max.time())
-    data = CompanyData(get_client()[company], harness, as_of=as_of_end, time_fields=time_fields)
-    meter = llm.CostMeter(limit_usd=settings.max_usd)
+    ws = await service.connect(db, company, company)
+    print(f"Analyzing {company} as of {as_of} ({settings.analyst_model}); date fields {ws['time_fields']}...")
+    doc = await service.run_report(db, company, as_of)
 
-    print(f"Analyzing {company} as of {as_of} with harness v{harness.version} ({settings.analyst_model})...")
-    analysis = await analyze(harness, data, company, meter, today=as_of)
-    report_id = await reports.save(db, company, harness.version, analysis, as_of=as_of)
-
-    tools = [s.tool for s in analysis.steps]
-    errors = sum(not s.ok for s in analysis.steps)
-    print(f"\nDone in {analysis.turns} turns, {len(tools)} tool calls ({errors} errors), ${analysis.cost_usd:.2f}")
-    print(f"Saved report {report_id}\n\n{analysis.report.summary}\n")
-    for i, f in enumerate(analysis.report.findings, 1):
-        print(f"{i}. {f.title}  [{f.metric} {f.direction} {f.magnitude:+.0%}, {f.period.start} to {f.period.end}]")
+    steps = doc["steps"]
+    errors = sum(not s["ok"] for s in steps)
+    print(f"\nHarness v{doc['harness_version']}: {doc['turns']} turns, {len(steps)} tool calls ({errors} errors), "
+          f"${doc['cost_usd']:.2f}")  # fmt: skip
+    print(f"Saved report {doc['_id']}\n\n{doc['report']['summary']}\n")
+    for i, f in enumerate(doc["report"]["findings"], 1):
+        print(f"{i}. {f['title']}  [{f['metric']} {f['direction']} {f['magnitude']:+.0%}]")
 
     OUT.mkdir(exist_ok=True)
-    path = OUT / f"{company}_{as_of}_v{harness.version}.html"
-    write_html(await reports.latest(db, company), path)
+    path = OUT / f"{company}_{as_of}_v{doc['harness_version']}.html"
+    write_html(doc, path)
     print(f"\nHTML: {path}")
 
 

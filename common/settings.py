@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     mongodb_uri: str | None = None
     mongodb_db: str = "recursive_analyst"
 
+    # API
+    cors_origins: str = "*"
+
     # Rounds
     max_rounds: int = Field(default=5, ge=1)
     max_usd: float = Field(default=25.0, gt=0)

@@ -1,0 +1,281 @@
+"""HTTP API for the web app: companies, reports, comments, reflection, and harness history.
+
+make api   # http://localhost:8000/docs
+"""
+
+from contextlib import asynccontextmanager
+from datetime import date
+from pathlib import Path
+from typing import Annotated, Any, Literal
+
+from bson import ObjectId
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from pymongo import DESCENDING
+
+from analyst import service
+from analyst.data import to_jsonable
+from api import jobs
+from common.db import get_client, get_db
+from common.ingest import IngestError, load_csv, slug
+from common.settings import get_settings
+from harness import store
+from harness.diff import diff
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await jobs.mark_interrupted(get_db())
+    yield
+
+
+app = FastAPI(title="Recursive Analyst API", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in get_settings().cors_origins.split(",")],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def out(value: Any) -> Any:
+    return to_jsonable(value)
+
+
+async def workspace_or_404(workspace_id: str) -> dict:
+    try:
+        return await store.get_workspace(get_db(), workspace_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+
+
+async def start_job(kind: str, workspace_id: str, work) -> dict:
+    try:
+        return out(await jobs.start(get_db(), kind, workspace_id, work))
+    except jobs.Busy as e:
+        raise HTTPException(409, str(e)) from e
+
+
+def report_summary(doc: dict) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "as_of": doc.get("as_of"),
+        "harness_version": doc["harness_version"],
+        "created_at": doc["created_at"],
+        "cost_usd": doc.get("cost_usd"),
+        "findings": [f["title"] for f in doc["report"]["findings"]],
+    }
+
+
+# Companies
+
+
+class ConnectBody(BaseModel):
+    company_db: str
+    workspace_id: str | None = None
+    name: str = ""
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"ok": True}
+
+
+@app.get("/companies")
+async def list_companies() -> list[dict]:
+    db = get_db()
+    result = []
+    for ws in await store.list_workspaces(db):
+        latest = await store.latest(db, ws["_id"])
+        result.append({**ws, "id": ws["_id"], "harness_version": latest.version})
+    return out(result)
+
+
+@app.post("/companies", status_code=201)
+async def connect_company(body: ConnectBody) -> dict:
+    """Connect an existing database in the cluster. Date fields are detected automatically."""
+    if (
+        body.company_db.startswith(("sample_", "admin", "local", "config"))
+        or body.company_db == get_settings().mongodb_db
+    ):
+        raise HTTPException(400, f"{body.company_db!r} cannot be connected")
+    try:
+        ws = await service.connect(get_db(), body.workspace_id or body.company_db, body.company_db, name=body.name,
+                                   source="existing")  # fmt: skip
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    return out(ws)
+
+
+@app.post("/companies/upload", status_code=201)
+async def upload_company(file: Annotated[UploadFile, File()], name: Annotated[str, Form()] = "") -> dict:
+    """Create a new company from a CSV: load it into its own database, detect dates, start a blank harness."""
+    stem = slug(Path(file.filename or "data").stem, 30)
+    company_db = f"co_{slug(name, 30) if name else stem}"
+    existing = set(await get_client().list_database_names())
+    base, n = company_db, 2
+    while company_db in existing:
+        company_db, n = f"{base}_{n}", n + 1
+    try:
+        loaded = await load_csv(get_client(), company_db, stem, await file.read())
+    except IngestError as e:
+        raise HTTPException(400, str(e)) from e
+    ws = await service.connect(get_db(), company_db, company_db, name=name or stem, source="csv")
+    return out({**ws, "loaded": loaded})
+
+
+@app.get("/companies/{workspace_id}")
+async def get_company(workspace_id: str) -> dict:
+    ws = await workspace_or_404(workspace_id)
+    latest = await store.latest(get_db(), workspace_id)
+    return out({**ws, "id": workspace_id, "harness_version": latest.version})
+
+
+class TimeFieldsBody(BaseModel):
+    time_fields: dict[str, str]
+
+
+@app.put("/companies/{workspace_id}/time-fields")
+async def set_time_fields(workspace_id: str, body: TimeFieldsBody) -> dict:
+    await workspace_or_404(workspace_id)
+    await store.set_time_fields(get_db(), workspace_id, body.time_fields)
+    return out(await store.get_workspace(get_db(), workspace_id))
+
+
+# Reports
+
+
+class ReportBody(BaseModel):
+    as_of: date | None = None
+
+
+@app.post("/companies/{workspace_id}/reports", status_code=202)
+async def run_report(workspace_id: str, body: ReportBody | None = None) -> dict:
+    """Start a report with the latest harness. Poll GET /jobs/{id}; the result holds the report id."""
+    await workspace_or_404(workspace_id)
+    as_of = body.as_of if body else None
+
+    async def work() -> dict:
+        doc = await service.run_report(get_db(), workspace_id, as_of)
+        return report_summary(doc)
+
+    return await start_job("report", workspace_id, work)
+
+
+@app.get("/companies/{workspace_id}/reports")
+async def list_reports(workspace_id: str) -> list[dict]:
+    docs = await get_db().reports.find({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)]).to_list()
+    return out([report_summary(d) for d in docs])
+
+
+@app.get("/companies/{workspace_id}/reports/latest")
+async def latest_report(workspace_id: str) -> dict:
+    doc = await get_db().reports.find_one({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)])
+    if not doc:
+        raise HTTPException(404, "No reports yet")
+    return out(doc)
+
+
+@app.get("/reports/{report_id}")
+async def get_report(report_id: str) -> dict:
+    if not ObjectId.is_valid(report_id):
+        raise HTTPException(404, "No such report")
+    doc = await get_db().reports.find_one({"_id": ObjectId(report_id)})
+    if not doc:
+        raise HTTPException(404, "No such report")
+    return out(doc)
+
+
+# Comments and reflection
+
+
+class CommentBody(BaseModel):
+    text: str
+    kind: Literal["comment", "keep", "stop"] = "comment"
+    finding_id: str | None = None
+    template_id: str | None = None
+    report_id: str | None = None
+
+
+@app.post("/companies/{workspace_id}/comments", status_code=201)
+async def add_comment(workspace_id: str, body: CommentBody) -> dict:
+    """Add a comment. `keep` with a finding_id saves that view; `stop` with a template_id turns a view off."""
+    await workspace_or_404(workspace_id)
+    if not body.text.strip():
+        raise HTTPException(400, "Comment text is empty")
+    return out(await service.add_comment(get_db(), workspace_id, **body.model_dump()))
+
+
+@app.get("/companies/{workspace_id}/comments")
+async def list_comments(workspace_id: str, status: Literal["pending", "applied"] | None = None) -> list[dict]:
+    return out(await service.list_comments(get_db(), workspace_id, status))
+
+
+@app.post("/companies/{workspace_id}/reflect", status_code=202)
+async def run_reflect(workspace_id: str) -> dict:
+    """Turn pending comments into harness edits. Poll GET /jobs/{id}; the result holds edits and the diff."""
+    await workspace_or_404(workspace_id)
+    return await start_job("reflect", workspace_id, lambda: service.run_reflect(get_db(), workspace_id))
+
+
+@app.get("/companies/{workspace_id}/reflections")
+async def list_reflections(workspace_id: str) -> list[dict]:
+    docs = await get_db().reflections.find({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)]).to_list()
+    return out(docs)
+
+
+# Harness
+
+
+@app.get("/companies/{workspace_id}/harness")
+async def get_harness(workspace_id: str, version: int | None = None) -> dict:
+    await workspace_or_404(workspace_id)
+    try:
+        h = await (store.get(get_db(), workspace_id, version) if version else store.latest(get_db(), workspace_id))
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    return h.model_dump()
+
+
+@app.get("/companies/{workspace_id}/harness/versions")
+async def harness_versions(workspace_id: str) -> list[dict]:
+    await workspace_or_404(workspace_id)
+    return out(await store.history(get_db(), workspace_id))
+
+
+@app.get("/companies/{workspace_id}/harness/diff")
+async def harness_diff(workspace_id: str, from_version: int, to_version: int) -> dict:
+    await workspace_or_404(workspace_id)
+    try:
+        a = await store.get(get_db(), workspace_id, from_version)
+        b = await store.get(get_db(), workspace_id, to_version)
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    return {"from": from_version, "to": to_version, "changes": diff(a, b)}
+
+
+class RevertBody(BaseModel):
+    version: int
+
+
+@app.post("/companies/{workspace_id}/harness/revert")
+async def revert_harness(workspace_id: str, body: RevertBody) -> dict:
+    """Make an earlier version current again (saved as a new version, so history is kept)."""
+    await workspace_or_404(workspace_id)
+    try:
+        h = await store.revert_to(get_db(), workspace_id, body.version)
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    return h.model_dump()
+
+
+# Jobs
+
+
+@app.get("/jobs/{job_id}")
+async def get_job(job_id: str) -> dict:
+    job = await get_db().jobs.find_one({"_id": job_id})
+    if not job:
+        raise HTTPException(404, "No such job")
+    return out(job)

@@ -93,3 +93,30 @@ async def test_describe_and_dates(company_db):
     assert rows[0]["n"] > 0
     top = await data.distinct_values("sales", "items[].name")
     assert top["values"][0]["value"] == "notepad"
+
+
+def test_extended_json_parsing_is_idempotent():
+    from analyst.data import parse_extended_json
+
+    once = parse_extended_json({"e": {"$regex": "@test", "$options": "i"}, "d": {"$date": "2024-01-01T00:00:00Z"}})
+    assert parse_extended_json(once) == once
+
+
+@needs_atlas
+async def test_regex_exclusion_with_options(company_db):
+    harness = apply_edit(
+        seed_harness("t"),
+        Edit(
+            action="add_exclusion",
+            target="test_accounts",
+            payload={
+                "filter": {"customer.email": {"$regex": "@TEST\\.example\\.com$", "$options": "i"}},
+                "reason": "QA",
+            },
+            rationale="t",
+            source="c",
+        ),
+    )
+    data = CompanyData(company_db, harness)
+    rows = await data.aggregate("sales", [{"$match": harness.knowledge.exclusions[0].filter}, {"$count": "n"}])
+    assert rows == []  # excluded documents can never be matched again

@@ -4,7 +4,6 @@ Everything the analyst sees goes through `CompanyData`. It is bound to a single 
 reads, and applies the harness exclusions to every query in code (not by prompt).
 """
 
-import json
 from datetime import datetime
 from typing import Any
 
@@ -38,8 +37,11 @@ def to_jsonable(value: Any) -> Any:
 
 
 def parse_extended_json(value: Any) -> Any:
-    """Turn model supplied JSON into BSON types, e.g. {"$date": "2024-01-01T00:00:00Z"}."""
-    return json_util.loads(json.dumps(value))
+    """Turn model supplied JSON into BSON types, e.g. {"$date": "2024-01-01T00:00:00Z"}.
+
+    Idempotent: values that are already BSON types (Regex, datetime) pass through unchanged.
+    """
+    return json_util.loads(json_util.dumps(value))
 
 
 def _walk(value: Any):

@@ -1,4 +1,4 @@
-.PHONY: smoke test lint build-data report baseline rounds verify-data
+.PHONY: api smoke test lint build-data report baseline rounds verify-data
 
 smoke:  ## Phase 0: ping Atlas and make one dummy LLM call
 	uv run python -m scripts.smoke
@@ -24,3 +24,6 @@ rounds:
 
 verify-data:
 	uv run python -m scripts.verify_company
+
+api:  ## Serve the API at http://localhost:8000 (docs at /docs)
+	uv run uvicorn api.main:app --reload --port 8000
