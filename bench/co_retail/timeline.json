@@ -1,0 +1,253 @@
+{
+  "company": "co_retail",
+  "notes": "One entry per quarterly review. The analyst writes its report as of `as_of`; the manager then reacts with `comments`, which take effect from the next review. Checks and reference pipelines are for the scorekeeper only. Reference placeholders: $$AS_OF, $$QUARTER_START, $$YEAR_START. Objectives are scored from the review after they are set until `scored_until`.",
+  "cycles": [
+    {
+      "as_of": "2023-12-31",
+      "comments": [
+        {
+          "id": "c01_margin_focus",
+          "kind": "preference",
+          "text": "I care about margin, not revenue. Revenue growth on products we barely make money on is not good news.",
+          "check": {
+            "type": "focus_metric",
+            "keyword": "margin"
+          }
+        },
+        {
+          "id": "c02_skip_london_promo",
+          "kind": "correction",
+          "text": "Skip the London coupon thing. That was our planned holiday promo, not a problem.",
+          "check": {
+            "type": "suppress_story",
+            "story_id": "london_coupon_spike"
+          }
+        },
+        {
+          "id": "o1_margin_2024",
+          "kind": "objective",
+          "text": "Our goal for 2024: keep gross margin at or above 46%. Gross margin means (revenue minus cost) divided by revenue, for calendar 2024 so far.",
+          "check": {
+            "type": "objective",
+            "tolerance": 0.5,
+            "reference": {
+              "collection": "sales",
+              "stages": [
+                {
+                  "$match": {
+                    "saleDate": {
+                      "$gte": "$$YEAR_START",
+                      "$lte": "$$AS_OF"
+                    },
+                    "customer.email": {
+                      "$not": {
+                        "$regex": "@test\\.example\\.com$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "$unwind": "$items"
+                },
+                {
+                  "$group": {
+                    "_id": null,
+                    "rev": {
+                      "$sum": {
+                        "$multiply": [
+                          {
+                            "$toDouble": "$items.price"
+                          },
+                          "$items.quantity"
+                        ]
+                      }
+                    },
+                    "cost": {
+                      "$sum": {
+                        "$multiply": [
+                          {
+                            "$toDouble": "$items.cost"
+                          },
+                          "$items.quantity"
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "$project": {
+                    "_id": 0,
+                    "value": {
+                      "$multiply": [
+                        100,
+                        {
+                          "$divide": [
+                            {
+                              "$subtract": [
+                                "$rev",
+                                "$cost"
+                              ]
+                            },
+                            "$rev"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "scored_until": "2024-12-31"
+          }
+        }
+      ]
+    },
+    {
+      "as_of": "2024-03-31",
+      "comments": [
+        {
+          "id": "c03_weekly",
+          "kind": "preference",
+          "text": "Monthly is too coarse for me. Show me trends week by week.",
+          "check": {
+            "type": "preference",
+            "key": "time_grain",
+            "value": "week"
+          }
+        }
+      ]
+    },
+    {
+      "as_of": "2024-06-30",
+      "comments": [
+        {
+          "id": "c04_store_baselines",
+          "kind": "preference",
+          "text": "Store level drops matter most to me. Always compare each store against its own recent history, not just the company total.",
+          "check": null
+        }
+      ]
+    },
+    {
+      "as_of": "2024-09-30",
+      "comments": [
+        {
+          "id": "c05_exclude_test",
+          "kind": "correction",
+          "text": "Some of these numbers look inflated. Exclude test accounts: anything with an @test.example.com email.",
+          "check": {
+            "type": "exclusion",
+            "field": "customer.email",
+            "sample_value": "qa+001@test.example.com"
+          }
+        },
+        {
+          "id": "c06_keep_margin_view",
+          "kind": "template_keep",
+          "text": "I like the weekly margin trend. Save that view and show it in every report from now on.",
+          "check": {
+            "type": "template_status",
+            "keyword": "margin",
+            "status": "on"
+          }
+        }
+      ]
+    },
+    {
+      "as_of": "2024-12-31",
+      "comments": [
+        {
+          "id": "c07_dollar_impact",
+          "kind": "preference",
+          "text": "Rank findings by dollar impact so the biggest problems are at the top.",
+          "check": {
+            "type": "ordering",
+            "by": "dollar_impact"
+          }
+        }
+      ]
+    },
+    {
+      "as_of": "2025-03-31",
+      "comments": [
+        {
+          "id": "o2_online_satisfaction",
+          "kind": "objective",
+          "text": "New goal: get average satisfaction for online orders back to at least 3.5 by the end of 2025. Measure it on online orders in the current quarter.",
+          "check": {
+            "type": "objective",
+            "tolerance": 0.1,
+            "reference": {
+              "collection": "sales",
+              "stages": [
+                {
+                  "$match": {
+                    "purchaseMethod": "Online",
+                    "saleDate": {
+                      "$gte": "$$QUARTER_START",
+                      "$lte": "$$AS_OF"
+                    },
+                    "customer.email": {
+                      "$not": {
+                        "$regex": "@test\\.example\\.com$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "$group": {
+                    "_id": null,
+                    "value": {
+                      "$avg": "$customer.satisfaction"
+                    }
+                  }
+                },
+                {
+                  "$project": {
+                    "_id": 0,
+                    "value": 1
+                  }
+                }
+              ]
+            },
+            "scored_until": "2025-12-31"
+          }
+        }
+      ]
+    },
+    {
+      "as_of": "2025-06-30",
+      "comments": [
+        {
+          "id": "c08_keep_online_view",
+          "kind": "template_keep",
+          "text": "Add a standing view of weekly online satisfaction so I can watch it every quarter.",
+          "check": {
+            "type": "template_status",
+            "keyword": "satisfaction",
+            "status": "on"
+          }
+        }
+      ]
+    },
+    {
+      "as_of": "2025-09-30",
+      "comments": [
+        {
+          "id": "c09_drop_margin_view",
+          "kind": "template_stop",
+          "text": "Stop showing the weekly margin chart. Finance covers that now.",
+          "check": {
+            "type": "template_status",
+            "keyword": "margin",
+            "status": "off"
+          }
+        }
+      ]
+    },
+    {
+      "as_of": "2025-12-31",
+      "comments": []
+    }
+  ]
+}

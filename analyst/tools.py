@@ -38,7 +38,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "distinct_values",
         "description": "Most common values of a field with counts. Use name[] paths for array fields, "
-        "e.g. items[].name.",
+        "e.g. lines[].category.",
         "input_schema": {
             "type": "object",
             "properties": {"collection": {"type": "string"}, "field": {"type": "string"}},
@@ -49,7 +49,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "run_aggregate",
         "description": "Run a read only MongoDB aggregation pipeline and return the result rows. "
-        "Exclusions from the playbook are applied automatically before your stages. "
+        "Exclusions from the playbook and the review date are applied automatically before your stages. "
         'Write dates as {"$date": "2024-01-01T00:00:00Z"}. Convert decimals with $toDouble. '
         f"At most {MAX_ROWS_TO_MODEL} rows are shown, so aggregate before returning.",
         "input_schema": {

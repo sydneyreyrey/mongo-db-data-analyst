@@ -31,10 +31,23 @@ def render(h: Harness) -> list[dict]:
         _section("Vocabulary", [f"- {term}: {t.definition}" for term, t in sorted(k.vocabulary.items())]),
         _section("Focus metrics", [f"- {m.name}: {m.definition}" for m in k.focus_metrics]),
         _section(
-            "Exclusions (apply to every query)",
+            "Exclusions (applied automatically to every query)",
             [f"- {e.id}: {json.dumps(e.filter, sort_keys=True)} ({e.reason})" for e in k.exclusions],
         ),
+        _section(
+            "Objectives (report the status of each one)",
+            [
+                f"- {o.id}: {o.text} Metric: {o.metric}. Target: {o.direction.replace('_', ' ')} {o.target:g} "
+                f"by {o.deadline}."
+                for o in k.objectives
+            ],
+        ),
         _section("Rules", [f"- {r.text}" for r in k.rules]),
+        _section(
+            "Saved views",
+            [f"- {t.id} ({t.status}): {t.name}. {t.description}" for t in k.templates],
+        ),
+        _section("Extra tools enabled", [f"- {name}" for name in h.capabilities.tools_enabled]),
         _section(
             "Preferences",
             [

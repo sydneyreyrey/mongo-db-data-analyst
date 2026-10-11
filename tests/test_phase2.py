@@ -9,9 +9,18 @@ from harness.locked import LockedFieldError
 from harness.schema import Harness
 from harness.seed import seed_harness
 
+OBJECTIVE = {"text": "Margin at least 46%", "metric": "gross margin %", "target": 46, "direction": "at_least",
+             "deadline": "2024-12-31"}  # fmt: skip
+TEMPLATE = {
+    "name": "Weekly margin",
+    "description": "Gross margin by week",
+    "pipeline": {"collection": "orders", "stages": [{"$group": {"_id": "$week", "margin": {"$sum": "$m"}}}]},
+    "chart": {"type": "line", "x": "_id", "y": "margin"},
+}
+
 
 def edit(action, target, payload=None, comment="c1"):
-    return Edit(action=action, target=target, payload=payload or {}, rationale="test", comment_id=comment)
+    return Edit(action=action, target=target, payload=payload or {}, rationale="test", source=comment)
 
 
 @pytest.fixture
@@ -20,7 +29,10 @@ def base() -> Harness:
     h = apply_edit(h, edit("add_rule", "r1", {"text": "old rule"}))
     h = apply_edit(h, edit("set_vocab", "aov", {"definition": "average order value"}))
     h = apply_edit(h, edit("set_focus_metric", "revenue", {"definition": "sum of price x qty"}))
-    h = apply_edit(h, edit("add_exclusion", "x1", {"filter": {"storeLocation": "X"}, "reason": "closed store"}))
+    h = apply_edit(h, edit("add_exclusion", "x1", {"filter": {"region": "X"}, "reason": "closed region"}))
+    h = apply_edit(h, edit("set_objective", "o0", {**OBJECTIVE, "text": "old goal"}))
+    h = apply_edit(h, edit("save_template", "t1", TEMPLATE))
+    h = apply_edit(h, edit("enable_tool", "detect_spikes"))
     return h
 
 
@@ -46,6 +58,12 @@ CASES = [
     ),
     (edit("remove_exclusion", "x1"), "- knowledge.exclusions[x1]"),
     (edit("set_preference", "time_grain", {"value": "week"}), "~ preferences.time_grain: month -> week"),
+    (edit("set_objective", "o1", OBJECTIVE), "+ knowledge.objectives[o1]"),
+    (edit("retire_objective", "o0"), "- knowledge.objectives[o0]"),
+    (edit("save_template", "t2", TEMPLATE), "+ knowledge.templates[t2]"),
+    (edit("set_template_status", "t1", {"status": "off"}), "~ knowledge.templates[t1]"),
+    (edit("enable_tool", "forecast"), "~ capabilities.tools_enabled"),
+    (edit("disable_tool", "detect_spikes"), "- capabilities.tools_enabled"),
 ]
 
 
@@ -60,7 +78,7 @@ def test_each_action_makes_new_version_with_diff(base, e, expected):
 
 def test_edits_record_their_source_comment(base):
     new = apply_edit(base, edit("add_rule", "r9", {"text": "x"}, comment="c42"))
-    assert new.knowledge.rules[-1].source_comment == "c42"
+    assert new.knowledge.rules[-1].source == "c42"
 
 
 def test_apply_does_not_mutate_input(base):
@@ -90,6 +108,14 @@ def test_locked_targets_raise(base, target):
         edit("add_exclusion", "bad", {"filter": {"$where": "1"}, "reason": "x"}),
         edit("add_exclusion", "bad", {"filter": {"a": {"$lookup": {}}}, "reason": "x"}),
         edit("add_exclusion", "bad", {"filter": "not a dict", "reason": "x"}),
+        edit("set_objective", "o9", {"text": "no target"}),
+        edit("set_objective", "o9", {**OBJECTIVE, "direction": "sideways"}),
+        edit("save_template", "t9", {**TEMPLATE, "pipeline": {"collection": "o", "stages": [{"$out": "x"}]}}),
+        edit("save_template", "t9", {**TEMPLATE, "chart": {"type": "pie", "x": "a", "y": "b"}}),
+        edit("set_template_status", "t1", {"status": "maybe"}),
+        edit("set_template_status", "missing", {"status": "off"}),
+        edit("enable_tool", "shell_access"),
+        edit("disable_tool", "forecast"),
     ],
     ids=lambda e: f"{e.action}:{e.target}",
 )

@@ -67,17 +67,54 @@ def check_pipeline(stages: list[dict], collections: set[str]) -> None:
 
 
 class CompanyData:
-    def __init__(self, db: AsyncDatabase, harness: Harness):
+    """One company's data, as the analyst is allowed to see it.
+
+    `time_fields` maps a collection to its event date field. With `as_of` set, documents dated after
+    it are invisible, including inside $lookup and $unionWith sub-pipelines.
+    """
+
+    def __init__(
+        self,
+        db: AsyncDatabase,
+        harness: Harness,
+        as_of: datetime | None = None,
+        time_fields: dict[str, str] | None = None,
+    ):
         self.db = db
         self.max_docs = harness.policy.constraints.max_docs
         self.max_time_ms = harness.policy.constraints.max_time_ms
+        self.as_of = as_of
+        self.time_fields = time_fields or {}
         filters = [parse_extended_json(e.filter) for e in harness.knowledge.exclusions]
         self.exclusion_match = {"$nor": filters} if filters else None
-        self.exclusion_ids = [e.id for e in harness.knowledge.exclusions]
 
-    def _exclude(self, query: dict | None = None) -> dict:
+    def _visible(self, collection: str, query: dict | None = None) -> dict:
+        """The filter every read of `collection` must pass: exclusions plus the as-of date."""
         parts = [q for q in (query, self.exclusion_match) if q]
+        field = self.time_fields.get(collection)
+        if self.as_of and field:
+            parts.append({field: {"$lte": self.as_of}})
         return {"$and": parts} if len(parts) > 1 else (parts[0] if parts else {})
+
+    def _guard(self, stages: list[dict]) -> list[dict]:
+        """Push the visibility filter into every sub-pipeline that reads another collection."""
+        out = []
+        for stage in stages:
+            ((name, spec),) = stage.items()
+            if name == "$lookup" and isinstance(spec, dict):
+                inner = [{"$match": self._visible(spec["from"])}, *self._guard(spec.get("pipeline", []))]
+                stage = {name: {**spec, "pipeline": inner}}
+            elif name == "$unionWith":
+                spec = {"coll": spec} if isinstance(spec, str) else spec
+                inner = [{"$match": self._visible(spec["coll"])}, *self._guard(spec.get("pipeline", []))]
+                stage = {name: {**spec, "pipeline": inner}}
+            elif name == "$graphLookup":
+                restrict = self._visible(spec["from"], spec.get("restrictSearchWithMatch"))
+                stage = {name: {**spec, "restrictSearchWithMatch": restrict}}
+            elif name == "$facet":
+                stage = {name: {k: self._guard(v) for k, v in spec.items()}}
+            out.append(stage)
+        return out
 
     async def collections(self) -> set[str]:
         names = await self.db.list_collection_names()
@@ -89,7 +126,7 @@ class CompanyData:
 
     async def list_collections(self) -> list[dict]:
         return [
-            {"name": n, "documents": await self.db[n].count_documents(self._exclude())}
+            {"name": n, "documents": await self.db[n].count_documents(self._visible(n))}
             for n in sorted(await self.collections())
         ]
 
@@ -97,7 +134,7 @@ class CompanyData:
         """Field paths, types, and example values inferred from a sample, plus date ranges."""
         await self._require(collection)
         coll = self.db[collection]
-        pipeline = [{"$match": self._exclude()}, {"$sample": {"size": sample_size}}]
+        pipeline = [{"$match": self._visible(collection)}, {"$sample": {"size": sample_size}}]
         fields: dict[str, dict] = {}
 
         def visit(value: Any, path: str) -> None:
@@ -129,7 +166,7 @@ class CompanyData:
                 rng = await (
                     await coll.aggregate(
                         [
-                            {"$match": self._exclude()},
+                            {"$match": self._visible(collection)},
                             {
                                 "$group": {
                                     "_id": None,
@@ -145,7 +182,7 @@ class CompanyData:
             out.append(entry)
         return {
             "collection": collection,
-            "documents": await coll.count_documents(self._exclude()),
+            "documents": await coll.count_documents(self._visible(collection)),
             "fields": out,
             "notes": "Array fields are shown as name[]. Decimal values need $toDouble before arithmetic.",
         }
@@ -153,13 +190,13 @@ class CompanyData:
     async def sample_docs(self, collection: str, n: int = 3) -> list[dict]:
         await self._require(collection)
         n = max(1, min(n, 5))
-        cursor = await self.db[collection].aggregate([{"$match": self._exclude()}, {"$sample": {"size": n}}])
+        cursor = await self.db[collection].aggregate([{"$match": self._visible(collection)}, {"$sample": {"size": n}}])
         return to_jsonable(await cursor.to_list())
 
     async def distinct_values(self, collection: str, field: str, limit: int = 50) -> dict:
         await self._require(collection)
         pipeline = [
-            {"$match": self._exclude()},
+            {"$match": self._visible(collection)},
             {"$unwind": {"path": f"${field.split('[]')[0]}", "preserveNullAndEmptyArrays": True}}
             if "[]" in field
             else {"$match": {}},
@@ -173,9 +210,10 @@ class CompanyData:
         }
 
     async def aggregate(self, collection: str, stages: list[dict]) -> list[dict]:
-        """Run a read only pipeline with exclusions prepended and the row cap appended."""
+        """Run a read only pipeline with visibility enforced at every level and the row cap appended."""
         await self._require(collection)
         check_pipeline(stages, await self.collections())
-        pipeline = [{"$match": self._exclude()}, *parse_extended_json(stages), {"$limit": self.max_docs}]
+        guarded = self._guard(parse_extended_json(stages))
+        pipeline = [{"$match": self._visible(collection)}, *guarded, {"$limit": self.max_docs}]
         cursor = await self.db[collection].aggregate(pipeline, maxTimeMS=self.max_time_ms)
         return to_jsonable(await cursor.to_list())

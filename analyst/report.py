@@ -5,40 +5,35 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from harness.schema import Chart, Pipeline
+
 
 class Period(BaseModel):
     start: str = Field(description="ISO date, e.g. 2024-04-01")
     end: str = Field(description="ISO date, inclusive")
 
 
-class Pipeline(BaseModel):
-    collection: str
-    stages: list[dict[str, Any]] = Field(
-        description="Aggregation stages. Exclusions are applied automatically. "
-        'Dates as {"$date": "2024-01-01T00:00:00Z"}.'
-    )
-
-
-class Chart(BaseModel):
-    type: Literal["line", "bar", "area", "point"]
-    x: str = Field(description="Field in the pipeline output rows for the x axis")
-    y: str = Field(description="Field in the pipeline output rows for the y axis")
-    color: str | None = Field(default=None, description="Optional field to split series by")
-    title: str = ""
-
-
 class Finding(BaseModel):
-    id: str = Field(description="Short slug, e.g. seattle_revenue_drop")
+    id: str = Field(description="Short slug, e.g. west_region_revenue_drop")
     title: str
     why_it_matters: str
-    metric: str = Field(description="What is measured, e.g. revenue, margin, satisfaction, units")
-    segment: dict[str, Any] = Field(description='Where it happens, e.g. {"storeLocation": "Seattle"}')
+    metric: str = Field(description="What is measured, e.g. revenue, margin, rating, signups")
+    segment: dict[str, Any] = Field(description='Where it happens, e.g. {"region": "West"}; {} if overall')
     period: Period
     direction: Literal["up", "down", "anomaly"]
     magnitude: float = Field(description="Relative change vs the comparison baseline, e.g. -0.45")
     dollar_impact: float | None = Field(default=None, description="Estimated dollars at stake, if known")
     pipeline: Pipeline = Field(description="Pipeline whose output proves the finding and feeds the chart")
     chart: Chart
+
+
+class ObjectiveStatus(BaseModel):
+    objective_id: str
+    value: float = Field(description="Current value of the objective's metric, as defined in the playbook")
+    target: float
+    status: Literal["on_track", "off_track", "met", "missed"]
+    note: str = Field(description="One sentence on what is driving it")
+    pipeline: Pipeline = Field(description="Pipeline whose first output row has a field named `value`")
 
 
 class Applied(BaseModel):
@@ -49,6 +44,7 @@ class Applied(BaseModel):
 class Report(BaseModel):
     summary: str
     findings: list[Finding]
+    objectives: list[ObjectiveStatus] = Field(default=[], description="One entry per active objective")
     applied: Applied
 
 

@@ -1,5 +1,6 @@
 """Analyze mode: explore the company data with tools, then submit a structured report."""
 
+import json
 import time
 from datetime import date
 from typing import Any
@@ -12,10 +13,11 @@ from analyst.report import Report, vega_lite
 from analyst.tools import TOOLS, run_tool
 from common import llm
 from common.settings import get_settings
-from harness.schema import Harness
+from harness.schema import Harness, Template
 
 MAX_TURNS = 30
 WRAP_UP_AT = 6  # turns left when the agent is told to submit
+VALUE_TOLERANCE = 0.01  # relative difference allowed between a stated objective value and its pipeline
 
 
 class Step(BaseModel):
@@ -27,9 +29,18 @@ class Step(BaseModel):
     seconds: float
 
 
+class TemplateRun(BaseModel):
+    id: str
+    name: str
+    ok: bool
+    error: str = ""
+
+
 class Analysis(BaseModel):
     report: Report
     charts: dict[str, dict]
+    template_runs: list[TemplateRun]
+    template_charts: dict[str, dict]
     steps: list[Step]
     usage: list[llm.Usage]
     turns: int
@@ -43,48 +54,101 @@ class AnalysisFailed(RuntimeError):
     pass
 
 
-def kickoff(company_db: str, today: date) -> str:
-    return (
-        f"Analyze the company database `{company_db}`. Today is {today.isoformat()}.\n"
-        "Orient yourself first (what collections exist, what a document looks like, the date range), "
-        "then investigate what is most important for this business: trends, drops, spikes, anomalies, "
-        "and which segments drive them. Compare against a baseline so every finding has a size.\n"
-        "Check your numbers with queries before you claim them. When done, call submit_report."
-    )
+async def run_templates(
+    data: CompanyData, templates: list[Template]
+) -> tuple[list[TemplateRun], dict[str, dict], list[str]]:
+    """Run every template that is on. Returns run records, charts, and text the analyst reads."""
+    runs, charts, texts = [], {}, []
+    for t in (t for t in templates if t.status == "on"):
+        try:
+            rows = await data.aggregate(t.pipeline.collection, t.pipeline.stages)
+            charts[t.id] = vega_lite(t.chart, rows)
+            runs.append(TemplateRun(id=t.id, name=t.name, ok=True))
+            texts.append(f"### {t.name} ({t.id})\n{t.description}\n{json.dumps(rows[:40], default=str)}")
+        except Exception as e:  # noqa: BLE001  (a broken template is reported, not fatal)
+            runs.append(TemplateRun(id=t.id, name=t.name, ok=False, error=str(e)[:300]))
+            texts.append(f"### {t.name} ({t.id})\nFailed to run: {str(e)[:300]}")
+    return runs, charts, texts
 
 
-async def _validate_report(data: CompanyData, args: dict) -> tuple[Report, dict[str, dict]]:
-    """Parse the report and re-run every finding's pipeline. Raises ValueError with all problems."""
+def kickoff(company_db: str, today: date, previous: list[str], standing_views: list[str]) -> str:
+    parts = [
+        f"Analyze the company database `{company_db}`. Today is {today.isoformat()}; this is your "
+        "regular business review and you can only see data up to today.",
+        "Orient yourself (what collections exist, what a document looks like, the date range), then "
+        "investigate what is most important for this business right now: trends, drops, spikes, anomalies, "
+        "and which segments drive them. Prioritize what changed recently. Compare against a baseline so "
+        "every finding has a size.",
+        "Check your numbers with queries before you claim them. Report the status of every objective in the "
+        "playbook. When done, call submit_report.",
+    ]
+    if previous:
+        parts.append("Your previous review reported:\n" + "\n".join(f"- {t}" for t in previous))
+    if standing_views:
+        parts.append(
+            "Standing views the user asked to see every time (already run, shown in the report as is). "
+            "Comment on them in your summary if they show something important:\n\n" + "\n\n".join(standing_views)
+        )
+    return "\n\n".join(parts)
+
+
+async def _validate_report(data: CompanyData, harness: Harness, args: dict) -> tuple[Report, dict[str, dict]]:
+    """Parse the report and re-run every pipeline in it. Raises ValueError listing all problems."""
     try:
         report = Report.model_validate(args)
     except ValidationError as e:
         raise ValueError(f"Report does not match the schema: {e}") from e
     problems, charts = [], {}
+
     for f in report.findings:
         try:
             rows = await data.aggregate(f.pipeline.collection, f.pipeline.stages)
         except Exception as e:  # noqa: BLE001  (any failure is reported back to the model)
-            problems.append(f"{f.id}: pipeline failed: {e}")
+            problems.append(f"finding {f.id}: pipeline failed: {e}")
             continue
         if not rows:
-            problems.append(f"{f.id}: pipeline returned no rows")
+            problems.append(f"finding {f.id}: pipeline returned no rows")
             continue
         missing = [c for c in (f.chart.x, f.chart.y, f.chart.color) if c and c not in rows[0]]
         if missing:
-            problems.append(f"{f.id}: chart fields {missing} not in pipeline output keys {sorted(rows[0])}")
+            problems.append(f"finding {f.id}: chart fields {missing} not in pipeline output keys {sorted(rows[0])}")
             continue
         charts[f.id] = vega_lite(f.chart, rows)
+
+    reported = {o.objective_id: o for o in report.objectives}
+    for objective in harness.knowledge.objectives:
+        status = reported.get(objective.id)
+        if not status:
+            problems.append(f"objective {objective.id}: missing status")
+            continue
+        try:
+            rows = await data.aggregate(status.pipeline.collection, status.pipeline.stages)
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"objective {objective.id}: pipeline failed: {e}")
+            continue
+        actual = rows[0].get("value") if rows else None
+        if not isinstance(actual, int | float):
+            problems.append(f"objective {objective.id}: pipeline must return a first row with a numeric `value`")
+        elif abs(actual - status.value) > VALUE_TOLERANCE * max(abs(actual), 1e-9):
+            problems.append(f"objective {objective.id}: stated value {status.value} but pipeline returns {actual}")
+
     if problems:
         raise ValueError("Fix these and call submit_report again:\n" + "\n".join(problems))
     return report, charts
 
 
 async def analyze(
-    harness: Harness, data: CompanyData, company_db: str, meter: llm.CostMeter, today: date | None = None
+    harness: Harness,
+    data: CompanyData,
+    company_db: str,
+    meter: llm.CostMeter,
+    today: date,
+    previous: list[str] | None = None,
 ) -> Analysis:
     settings = get_settings()
     system = render(harness)
-    messages: list[dict[str, Any]] = [{"role": "user", "content": kickoff(company_db, today or date.today())}]
+    template_runs, template_charts, standing = await run_templates(data, harness.knowledge.templates)
+    messages: list[dict[str, Any]] = [{"role": "user", "content": kickoff(company_db, today, previous or [], standing)}]
     steps: list[Step] = []
     usage: list[llm.Usage] = []
 
@@ -116,21 +180,22 @@ async def analyze(
             ok = True
             if block.name == "submit_report":
                 try:
-                    report, charts = await _validate_report(data, block.input)
+                    report, charts = await _validate_report(data, harness, block.input)
                 except ValueError as e:
                     ok, text = False, str(e)
                 else:
-                    steps.append(
-                        Step(
-                            turn=turn,
-                            tool=block.name,
-                            input={},
-                            ok=True,
-                            output_preview="accepted",
-                            seconds=round(time.perf_counter() - start, 3),
-                        )
+                    seconds = round(time.perf_counter() - start, 3)
+                    steps.append(Step(turn=turn, tool=block.name, input={}, ok=True, output_preview="accepted",
+                                      seconds=seconds))  # fmt: skip
+                    return Analysis(
+                        report=report,
+                        charts=charts,
+                        template_runs=template_runs,
+                        template_charts=template_charts,
+                        steps=steps,
+                        usage=usage,
+                        turns=turn,
                     )
-                    return Analysis(report=report, charts=charts, steps=steps, usage=usage, turns=turn)
             else:
                 try:
                     text = await run_tool(data, block.name, block.input)
@@ -138,16 +203,10 @@ async def analyze(
                     ok, text = False, f"{type(e).__name__}: {e}"
                 except Exception as e:  # noqa: BLE001  (database errors go back to the model to fix)
                     ok, text = False, f"Query failed: {e}"
-            steps.append(
-                Step(
-                    turn=turn,
-                    tool=block.name,
-                    input=block.input,
-                    ok=ok,
-                    output_preview=text[:300],
-                    seconds=round(time.perf_counter() - start, 3),
-                )
-            )
+            seconds = round(time.perf_counter() - start, 3)
+            preview = text[:300]
+            steps.append(Step(turn=turn, tool=block.name, input=block.input, ok=ok, output_preview=preview,
+                              seconds=seconds))  # fmt: skip
             results.append({"type": "tool_result", "tool_use_id": block.id, "content": text, "is_error": not ok})
 
         remaining = MAX_TURNS - turn

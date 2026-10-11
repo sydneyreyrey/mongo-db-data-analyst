@@ -61,7 +61,7 @@ async def test_exclusions_are_applied_to_every_query(company_db):
                 target="test_accounts",
                 payload={"filter": {"customer.email": {"$regex": "@test\\.example\\.com$"}}, "reason": "QA"},
                 rationale="t",
-                comment_id="c",
+                source="c",
             ),
         ),
     )

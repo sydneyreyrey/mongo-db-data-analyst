@@ -17,7 +17,7 @@ build-data:  ## Rebuild co_retail in Atlas and write bench/co_retail/planted.jso
 	uv run python -m scripts.build_company
 
 report:
-	uv run python -m scripts.report --company $(COMPANY)
+	uv run python -m scripts.report --company $(COMPANY) $(if $(AS_OF),--as-of $(AS_OF))
 
 rounds:
 	uv run python -m scripts.rounds --company $(COMPANY) --n $(N)
