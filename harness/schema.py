@@ -24,11 +24,19 @@ class Pipeline(BaseModel):
 
 
 class Chart(BaseModel):
+    """A chart for a non-technical reader. Field names stay internal; people only see the labels."""
+
     type: Literal["line", "bar", "area", "point"]
     x: str = Field(description="Field in the pipeline output rows for the x axis")
     y: str = Field(description="Field in the pipeline output rows for the y axis")
-    color: str | None = Field(default=None, description="Optional field to split series by")
-    title: str = ""
+    color: str | None = Field(default=None, description="Optional field to split series by (at most 5 series)")
+    title: str = Field(default="", description="Plain words stating the takeaway, e.g. 'Signups doubled in March'")
+    x_label: str = Field(default="", description="Plain words for the x axis, e.g. 'Region' or 'Week'")
+    y_label: str = Field(default="", description="Plain words with units for the y axis, e.g. 'Profit ($)'")
+    color_label: str = Field(default="", description="Plain words for the legend, if color is used")
+    y_format: Literal["number", "currency", "percent"] = Field(
+        default="number", description="How to show y values; percent expects fractions (0.45 shows as 45%)"
+    )
 
 
 class Identity(BaseModel):

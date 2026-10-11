@@ -223,6 +223,11 @@ The full report.
   "cost_usd": 0.0827,
   "turns": 6,
   "report": {
+    "title": "September close: margin is slipping, and the Denver spike is test data",
+    "focus": {
+      "headline": "Margin fell for three straight weeks while revenue looked flat.",
+      "detail": "Gross margin dropped from 46% to 43% since early September. Low-margin paper orders are growing fastest. Denver's August jump came from test accounts, not real customers."
+    },
     "summary": "Plain text summary of the review...",
     "findings": [
       {
@@ -236,7 +241,9 @@ The full report.
         "magnitude": -0.369,
         "dollar_impact": -10765.65,
         "pipeline": { "collection": "sales", "stages": [ "...the MongoDB query that proves it..." ] },
-        "chart": { "type": "line", "x": "month", "y": "margin", "color": null, "title": "Denver monthly margin" }
+        "chart": { "type": "line", "x": "month", "y": "margin", "color": null,
+                   "title": "Denver's profit has fallen since July", "x_label": "Month", "y_label": "Profit ($)",
+                   "color_label": "", "y_format": "currency" }
       }
     ],
     "objectives": [
@@ -253,10 +260,15 @@ The full report.
 }
 ```
 
-How to render it:
+How to render it, top to bottom:
 
+* **Meta line**: report type name, review date (`as_of`), and notebook version, for example
+  "End-of-month close · Sep 30, 2024 · notebook v2".
+* **Title** (H1): `report.title`, a concrete name stating the main point. Never a generic label.
+* **Focus** (H2 plus one paragraph): `report.focus.headline` as the H2, then `report.focus.detail` (always three
+  sentences or fewer). This is the one thing to pay attention to.
 * **Findings**: `title`, `why_it_matters`, and a meta line from `metric`, `direction`, `magnitude` (a fraction: `-0.369` is -37%), `period`, `dollar_impact`.
-* **Charts**: `charts[finding.id]` is a complete Vega-Lite spec with its data inline. Render with [vega-embed](https://github.com/vega/vega-embed): `vegaEmbed(el, report.charts[f.id], { actions: false })`. The data is the finding's own query result, so the chart cannot disagree with the numbers.
+* **Charts**: `charts[finding.id]` is a complete Vega-Lite spec with its data inline. Render with [vega-embed](https://github.com/vega/vega-embed): `vegaEmbed(el, report.charts[f.id], { actions: false })`. The data is the finding's own query result, so the chart cannot disagree with the numbers. Charts are built for non-technical readers: the title states the takeaway, axes and hover text use plain labels with units, money shows as `$1,200`, rates as `45%`, bars are sorted biggest first, and there are at most five colored series. No field names (like `_id`) appear anywhere a person sees. The analyst cannot submit a report whose charts break these rules.
 * **Saved views**: `template_runs` lists the views the manager asked to see every time; render `template_charts[run.id]` for each `ok` run. Use a run's `id` as the `template_id` for a stop button.
 * **Goals**: `report.objectives`; `status` is `on_track`, `off_track`, `met`, or `missed`.
 * **How it worked** (optional): `steps` is every tool call the analyst made, and `turns` and `cost_usd` are totals.
@@ -700,12 +712,15 @@ export type ReportSummary = {
   id: string; as_of: string; report_type: ReportTypeRef; harness_version: number; created_at: string; cost_usd: number; findings: string[];
 };
 
+export type Focus = { headline: string; detail: string };
+
 export type Finding = {
   id: string; title: string; why_it_matters: string; metric: string;
   segment: Record<string, unknown>; period: { start: string; end: string };
   direction: "up" | "down" | "anomaly"; magnitude: number; dollar_impact: number | null;
   pipeline: { collection: string; stages: object[] };
-  chart: { type: "line" | "bar" | "area" | "point"; x: string; y: string; color: string | null; title: string };
+  chart: { type: "line" | "bar" | "area" | "point"; x: string; y: string; color: string | null; title: string;
+           x_label: string; y_label: string; color_label: string; y_format: "number" | "currency" | "percent" };
 };
 
 export type ObjectiveStatus = {
@@ -717,7 +732,7 @@ export type Report = {
   _id: string; workspace_id: string; harness_version: number; as_of: string; report_type: ReportTypeRef;
   created_at: string;
   cost_usd: number; turns: number;
-  report: { summary: string; findings: Finding[]; objectives: ObjectiveStatus[];
+  report: { title: string; focus: Focus; summary: string; findings: Finding[]; objectives: ObjectiveStatus[];
             applied: { focus_metrics: string[]; time_grain: string } };
   charts: Record<string, object>;            // Vega-Lite spec per finding id
   template_runs: { id: string; name: string; ok: boolean; error: string }[];

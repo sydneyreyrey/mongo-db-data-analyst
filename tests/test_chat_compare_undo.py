@@ -245,7 +245,7 @@ async def test_dream_consolidates_working_memory(monkeypatch, memory_db):
 
 
 BY_STORE = {"collection": "sales", "stages": [{"$group": {"_id": "$storeLocation", "n": {"$sum": 1}}}]}
-BAR = {"type": "bar", "x": "_id", "y": "n", "title": "Orders by store"}
+BAR = {"type": "bar", "x": "_id", "y": "n", "title": "Orders by store", "x_label": "Store", "y_label": "Orders"}
 WEEKLY_LESSON = {"lesson": "Show trends weekly.", "edits": WEEKLY["edits"]}
 
 

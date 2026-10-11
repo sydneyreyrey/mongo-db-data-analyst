@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, ValidationError
 from analyst.data import CompanyData
 from analyst.prompt_builder import render
 from analyst.reflect import EDIT_GUIDE, Proposal, _check, _report_brief
-from analyst.report import vega_lite
+from analyst.report import chart_problems, vega_lite
 from analyst.tools import TOOLS, run_tool
 from common import llm
 from common.settings import get_settings
@@ -63,7 +63,9 @@ decides what lands. Reply briefly and let the charts speak.
 
 Answer their questions and try the what-ifs they ask for ("what if we excluded returns?", "break that down by
 week"), or suggest a useful next one. Check everything with the read only tools. Show each meaningful result
-with the `show` tool: a title, a one sentence summary of what it shows, the pipeline, and a chart.
+with the `show` tool: a title, a one sentence summary of what it shows, the pipeline, and a chart a person with
+no technical background can read (plain title stating the takeaway, axis labels in plain words with units, no
+field names).
 
 When a step reflects a way of working the reader might want every time (an exclusion, a metric definition, a
 time grain, a breakdown worth watching), attach it as `lesson`, with the playbook edits that would express it.
@@ -228,6 +230,9 @@ async def _show(data: CompanyData, harness: Harness, show: ShowInput, message_id
     missing = [c for c in (show.chart.x, show.chart.y, show.chart.color) if c and c not in rows[0]]
     if missing:
         raise ValueError(f"chart fields {missing} not in pipeline output keys {sorted(rows[0])}")
+    unreadable = chart_problems(show.chart, rows)
+    if unreadable:
+        raise ValueError("; ".join(unreadable))
     candidate = None
     if show.lesson:
         edits = [Edit(**e.model_dump(), source=message_id) for e in show.lesson.edits]

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 from analyst.data import CompanyData
 from analyst.prompt_builder import render
-from analyst.report import vega_lite
+from analyst.report import chart_problems, vega_lite
 from analyst.tools import TOOLS, run_tool
 from common import llm
 from common.settings import get_settings
@@ -32,7 +32,8 @@ EDIT_GUIDE = """Edit actions (target, then payload):
 - set_objective / retire_objective: objective id; {"text", "metric": exact computation, "target": number,
   "direction": "at_least" | "at_most", "deadline": "YYYY-MM-DD"}
 - save_template: template id; {"name", "description", "pipeline": {"collection", "stages"},
-  "chart": {"type": line | bar | area | point, "x", "y", "color" (optional), "title"}}
+  "chart": {"type": line | bar | area | point, "x", "y", "color" (optional), "title", "x_label", "y_label",
+  "color_label" (if color), "y_format": number | currency | percent}}; titles and labels in plain words
 - set_template_status: template id; {"status": "on" | "off"}"""
 
 REFLECT_INSTRUCTIONS = (
@@ -150,6 +151,9 @@ async def _check(
                 missing = [c for c in (t.chart.x, t.chart.y, t.chart.color) if c and c not in rows[0]]
                 if missing:
                     raise ValueError(f"chart fields {missing} not in output keys {sorted(rows[0])}")
+                unreadable = chart_problems(t.chart, rows)
+                if unreadable:
+                    raise ValueError("; ".join(unreadable))
             except Exception as e:  # noqa: BLE001  (reported back to the model)
                 problems.append(f"{label}: template does not run: {e}")
 

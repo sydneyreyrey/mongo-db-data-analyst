@@ -9,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from analyst.data import CompanyData, QueryRejected
 from analyst.prompt_builder import render
-from analyst.report import Report, vega_lite
+from analyst.report import Report, chart_problems, sentences, vega_lite
 from analyst.tools import TOOLS, run_tool
 from common import llm
 from common.settings import get_settings
@@ -84,6 +84,11 @@ def kickoff(
         "so every finding has a size.",
         "Check your numbers with queries before you claim them. Report the status of every objective in the "
         "playbook. When done, call submit_report.",
+        "Write for a busy reader with no technical background. Give the report a concrete title that names its main "
+        "point (never a generic label). Lead with the focus: the one thing they should pay attention to, as a "
+        "headline, then at most three plain sentences with the key numbers. Make every chart readable at a glance: "
+        "a title that states the takeaway, axis labels in plain words with units, money as currency, rates as "
+        "percent, at most five colored series, and never a field name or code anywhere a person will see it.",
     ]
     if previous:
         parts.append(f"Your previous {kind['name']} reported:\n" + "\n".join(f"- {t}" for t in previous))
@@ -102,6 +107,12 @@ async def _validate_report(data: CompanyData, harness: Harness, args: dict) -> t
     except ValidationError as e:
         raise ValueError(f"Report does not match the schema: {e}") from e
     problems, charts = [], {}
+    if report.title.strip().lower() in ("general review", "report", "business review", "review", ""):
+        problems.append("title is generic; name the report after its main point")
+    if not report.focus.headline.strip():
+        problems.append("focus headline is empty")
+    if sentences(report.focus.detail) > 3:
+        problems.append(f"focus detail has {sentences(report.focus.detail)} sentences; use three or fewer")
 
     for f in report.findings:
         try:
@@ -115,6 +126,10 @@ async def _validate_report(data: CompanyData, harness: Harness, args: dict) -> t
         missing = [c for c in (f.chart.x, f.chart.y, f.chart.color) if c and c not in rows[0]]
         if missing:
             problems.append(f"finding {f.id}: chart fields {missing} not in pipeline output keys {sorted(rows[0])}")
+            continue
+        unreadable = chart_problems(f.chart, rows)
+        if unreadable:
+            problems.extend(f"finding {f.id}: {p}" for p in unreadable)
             continue
         charts[f.id] = vega_lite(f.chart, rows)
 

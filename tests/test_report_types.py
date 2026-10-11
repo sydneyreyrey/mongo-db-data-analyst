@@ -19,7 +19,14 @@ FINDING = {
     "direction": "up",
     "magnitude": 0.1,
     "pipeline": {"collection": "sales", "stages": [{"$group": {"_id": "$storeLocation", "n": {"$sum": 1}}}]},
-    "chart": {"type": "bar", "x": "_id", "y": "n"},
+    "chart": {
+        "type": "bar",
+        "x": "_id",
+        "y": "n",
+        "title": "Orders differ by location",
+        "x_label": "Location",
+        "y_label": "Orders",
+    },
 }
 
 
@@ -29,7 +36,9 @@ def fake_reports(titles: list[str]):
 
     async def call(role, meter=None, **params):
         calls.append({**params, "messages": list(params["messages"])})
-        report = {"summary": "s", "findings": [{**FINDING, "title": titles[len(calls) - 1]}], "applied": {}}
+        report = {"title": "Orders are concentrated in two locations", "summary": "s", "applied": {},
+                  "focus": {"headline": "Two locations carry the business.", "detail": "They take most orders."},
+                  "findings": [{**FINDING, "title": titles[len(calls) - 1]}]}  # fmt: skip
         block = SimpleNamespace(type="tool_use", id="t", name="submit_report", input=report)
         usage = llm.Usage(role=role, model="fake", input_tokens=0, output_tokens=0, cache_read_tokens=0,
                           cache_write_tokens=0, cost_usd=0.0, latency_s=0.0)  # fmt: skip

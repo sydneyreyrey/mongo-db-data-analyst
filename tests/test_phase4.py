@@ -149,7 +149,8 @@ def report_with(value: float | None) -> dict:
                 "pipeline": {"collection": "sales", "stages": MARGIN_STAGES},
             }  # fmt: skip
         ]
-    return Report(summary="s", findings=[], objectives=objectives, applied={}).model_dump()
+    return Report(title="Margin is close to its goal", focus={"headline": "Margin is close.", "detail": "It is."},
+                  summary="s", findings=[], objectives=objectives, applied={}).model_dump()  # fmt: skip
 
 
 @needs_atlas
