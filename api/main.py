@@ -177,7 +177,6 @@ async def latest_report(workspace_id: str) -> dict:
     return out(doc)
 
 
-@app.get("/reports/{report_id}")
 async def get_report(report_id: str) -> dict:
     if not ObjectId.is_valid(report_id):
         raise HTTPException(404, "No such report")
@@ -225,6 +224,70 @@ async def list_reflections(workspace_id: str) -> list[dict]:
     return out(docs)
 
 
+# Chat: the analyst answers and learns as you talk
+
+
+class ChatBody(BaseModel):
+    message: str
+    conversation_id: str | None = None
+    report_id: str | None = None
+    finding_id: str | None = None
+    template_id: str | None = None
+
+
+@app.post("/companies/{workspace_id}/chat")
+async def chat(workspace_id: str, body: ChatBody) -> dict:
+    """Send a message about a report. Costs money. Waits for the reply (usually 5 to 40 seconds).
+
+    The reply may include `learned`: changes saved to the notebook right away, each undoable.
+    """
+    await workspace_or_404(workspace_id)
+    if not body.message.strip():
+        raise HTTPException(400, "Message is empty")
+    if await get_db().jobs.find_one({"workspace_id": workspace_id, "status": "running", "kind": "reflect"}):
+        raise HTTPException(409, "A reflect job is running for this company")
+    try:
+        return out(await service.chat_message(get_db(), workspace_id, **body.model_dump()))
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+
+
+@app.get("/companies/{workspace_id}/conversations")
+async def list_conversations(workspace_id: str) -> list[dict]:
+    await workspace_or_404(workspace_id)
+    docs = (
+        await get_db().conversations.find({"workspace_id": workspace_id}, sort=[("created_at", DESCENDING)]).to_list()
+    )
+    return out(docs)
+
+
+@app.get("/conversations/{conversation_id}/messages")
+async def list_messages(conversation_id: str) -> list[dict]:
+    if not await get_db().conversations.find_one({"_id": conversation_id}):
+        raise HTTPException(404, "No such conversation")
+    docs = await get_db().messages.find({"conversation_id": conversation_id}, sort=[("created_at", 1)]).to_list()
+    return out(docs)
+
+
+# Report comparison
+
+
+@app.get("/reports/compare")
+async def compare_reports(a: str, b: str) -> dict:
+    """What the notebook learned between two reports of the same company, and how the findings changed. Free."""
+    if not (ObjectId.is_valid(a) and ObjectId.is_valid(b)):
+        raise HTTPException(404, "No such report")
+    try:
+        return out(await service.compare_reports(get_db(), a, b))
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+app.get("/reports/{report_id}")(get_report)  # registered after /reports/compare so that route wins
+
+
 # Harness
 
 
@@ -253,6 +316,22 @@ async def harness_diff(workspace_id: str, from_version: int, to_version: int) ->
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
     return {"from": from_version, "to": to_version, "changes": diff(a, b)}
+
+
+class UndoBody(BaseModel):
+    version: int
+    edit_index: int
+
+
+@app.post("/companies/{workspace_id}/harness/undo")
+async def undo_change(workspace_id: str, body: UndoBody) -> dict:
+    """Undo one learned change (edit `edit_index` of version `version`). Saved as a new version. Free."""
+    await workspace_or_404(workspace_id)
+    try:
+        h, edit = await store.undo(get_db(), workspace_id, body.version, body.edit_index)
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    return {"harness": h.model_dump(), "undone": edit.model_dump()}
 
 
 class RevertBody(BaseModel):

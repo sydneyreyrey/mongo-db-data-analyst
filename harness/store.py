@@ -9,6 +9,7 @@ from harness.diff import diff
 from harness.edits import Edit, apply_edit
 from harness.schema import Harness
 from harness.seed import seed_harness
+from harness.undo import undo_edit
 
 
 async def ensure_indexes(db: AsyncDatabase) -> None:
@@ -110,6 +111,20 @@ async def revert_to(db: AsyncDatabase, workspace_id: str, version: int) -> Harne
     restored = target.model_copy(update={"version": current.version + 1, "parent_version": version})
     await _insert(db, restored, edits=[], created_by=f"revert:v{current.version}")
     return restored
+
+
+async def undo(db: AsyncDatabase, workspace_id: str, version: int, edit_index: int) -> tuple[Harness, Edit]:
+    """Undo one edit from `version` on top of the latest harness. Returns the new harness and the undone edit."""
+    doc = await db.harness_versions.find_one({"workspace_id": workspace_id, "version": version})
+    if not doc or not 0 <= edit_index < len(doc["edits"]):
+        raise KeyError(f"No edit {edit_index} in v{version} for {workspace_id!r}")
+    edit = Edit.model_validate(doc["edits"][edit_index])
+    if doc["parent_version"] is None:
+        raise KeyError(f"v{version} has no parent to restore from")
+    before = await get(db, workspace_id, doc["parent_version"])
+    restored = undo_edit(await latest(db, workspace_id), before, edit)
+    await _insert(db, restored, edits=[], created_by=f"undo:v{version}#{edit_index}")
+    return restored, edit
 
 
 async def history(db: AsyncDatabase, workspace_id: str) -> list[dict]:

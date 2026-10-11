@@ -21,17 +21,7 @@ from harness.schema import Harness
 
 MAX_TURNS = 10
 
-REFLECT_INSTRUCTIONS = """You maintain the playbook above. You are now in Reflect mode, not writing a report.
-
-Turn each new comment into the smallest set of playbook edits that makes every future report follow it.
-Edits are permanent until changed, so write them for future reviews, not just the last one. Prefer precise,
-checkable entries (an exclusion filter, a focus metric with an exact definition, a preference value) over
-vague rules. Use the read only tools to check field names and real values before writing filters or pipelines.
-Every edit's `source` is the id of the comment it answers. If an objective is off track, you may also add
-edits aimed at it, with the objective id as `source`. If a comment cannot be expressed as an edit, explain
-why in `notes` instead. Then call propose_edits once with everything.
-
-Edit actions (target, then payload):
+EDIT_GUIDE = """Edit actions (target, then payload):
 - annotate_collection: collection name; {"note"}
 - set_vocab / remove_vocab: term; {"definition"}
 - add_rule / retire_rule: rule id; {"text"}
@@ -43,6 +33,21 @@ Edit actions (target, then payload):
 - save_template: template id; {"name", "description", "pipeline": {"collection", "stages"},
   "chart": {"type": line | bar | area | point, "x", "y", "color" (optional), "title"}}
 - set_template_status: template id; {"status": "on" | "off"}"""
+
+REFLECT_INSTRUCTIONS = (
+    """You maintain the playbook above. You are now in Reflect mode, not writing a report.
+
+Turn each new comment into the smallest set of playbook edits that makes every future report follow it.
+Edits are permanent until changed, so write them for future reviews, not just the last one. Prefer precise,
+checkable entries (an exclusion filter, a focus metric with an exact definition, a preference value) over
+vague rules. Use the read only tools to check field names and real values before writing filters or pipelines.
+Every edit's `source` is the id of the comment it answers. If an objective is off track, you may also add
+edits aimed at it, with the objective id as `source`. If a comment cannot be expressed as an edit, explain
+why in `notes` instead. Then call propose_edits once with everything.
+
+"""
+    + EDIT_GUIDE
+)
 
 
 class Comment(BaseModel):
