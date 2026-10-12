@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, ValidationError
 from analyst.agent import SANITY_CHECK
 from analyst.data import CompanyData
 from analyst.prompt_builder import render
-from analyst.reflect import EDIT_GUIDE, Proposal, _check, _report_brief
+from analyst.reflect import EDIT_GUIDE, Proposal, _check
 from analyst.report import chart_problems, vega_lite
 from analyst.tools import TOOLS, run_tool
 from common import llm
@@ -118,6 +118,7 @@ class Reply(BaseModel):
     text: str
     lessons: list[dict]
     steps: list[dict] = []
+    checks: list[dict] = []  # every query the analyst ran for this reply
     usage: list[llm.Usage]
 
     @property
@@ -129,11 +130,44 @@ class ChatFailed(RuntimeError):
     pass
 
 
+MAX_CHART_POINTS = 40
+
+
+def report_as_read(report_doc: dict) -> dict:
+    """The report the way the reader sees it: every section's text, and each chart's title, labels, and numbers."""
+    r = report_doc["report"]
+    sections = []
+    for f in r["findings"]:
+        section = {k: f.get(k) for k in ("id", "title", "why_it_matters", "metric", "segment", "period", "direction")}
+        spec = report_doc.get("charts", {}).get(f["id"])
+        if spec and f.get("chart"):
+            c = f["chart"]
+            points = spec.get("data", {}).get("values", [])
+            section["chart"] = {
+                "title": c.get("title"), "x_label": c.get("x_label"), "y_label": c.get("y_label"),
+                "points": points[:MAX_CHART_POINTS], "more_points": max(0, len(points) - MAX_CHART_POINTS),
+            }  # fmt: skip
+        sections.append(section)
+    return {
+        "as_of": report_doc.get("as_of"),
+        "report_type": report_doc.get("report_type", {}).get("name", "General review"),
+        "title": r.get("title"),
+        "focus": r.get("focus"),
+        "sections_in_order": sections,
+        "objectives": [
+            {k: o[k] for k in ("objective_id", "value", "target", "status", "note")} for o in r.get("objectives", [])
+        ],
+        "saved_views_shown": [t["name"] for t in report_doc.get("template_runs", []) if t.get("ok")],
+    }
+
+
 def context_message(report_doc: dict | None, pointing_at: dict | None) -> str:
     parts = []
     if report_doc:
-        brief = _report_brief(report_doc, [])
-        parts.append("Your latest report:\n" + json.dumps(brief, default=str, indent=1))
+        parts.append(
+            "Your latest report, exactly as the reader sees it (charts in order, with their numbers):\n"
+            + json.dumps(report_as_read(report_doc), default=str, indent=1)
+        )
     if pointing_at:
         parts.append("The reader is pointing at this item:\n" + json.dumps(pointing_at, default=str, indent=1))
     return "\n\n".join(parts)
@@ -170,6 +204,7 @@ async def chat(
     messages.append({"role": "user", "content": f"{context}\n\nReader: {message}" if context else message})
     lessons: list[dict] = []
     steps: list[dict] = []
+    checks: list[dict] = []
     usage: list[llm.Usage] = []
 
     for _ in range(MAX_TURNS):
@@ -178,7 +213,7 @@ async def chat(
             meter,
             model=settings.analyst_model,
             max_tokens=8000,
-            output_config={"effort": "low"},
+            output_config={"effort": "medium"},
             system=system,
             tools=EXPLORE_TOOLS if explore else CHAT_TOOLS,
             messages=messages,
@@ -190,7 +225,7 @@ async def chat(
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         if not tool_uses:
             text = "".join(b.text for b in response.content if b.type == "text").strip()
-            return Reply(text=text, lessons=lessons, steps=steps, usage=usage)
+            return Reply(text=text, lessons=lessons, steps=steps, checks=checks, usage=usage)
 
         results = []
         for block in tool_uses:
@@ -222,6 +257,8 @@ async def chat(
                     text = await run_tool(data, block.name, block.input)
                 except Exception as e:  # noqa: BLE001  (query errors go back to the model)
                     ok, text = False, f"{type(e).__name__}: {e}"
+            if block.name in {t["name"] for t in READ_TOOLS}:
+                checks.append({"tool": block.name, "input": block.input, "ok": ok, "result_preview": text[:300]})
             results.append({"type": "tool_result", "tool_use_id": block.id, "content": text, "is_error": not ok})
         messages.append({"role": "user", "content": results})
 

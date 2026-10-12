@@ -315,3 +315,32 @@ async def test_explore_mode_only_what_lands_becomes_long_term(monkeypatch, memor
     assert again["journal"] == "Nothing new to consolidate." and [f["_id"] for f in again["faded"]] == [weak["_id"]]
     statuses = {x["_id"]: x["status"] for x in await memory.all_lessons(db, "ws")}
     assert statuses == {kept["_id"]: "consolidated", weekly["_id"]: "consolidated", weak["_id"]: "faded"}
+
+
+def test_chat_sees_report_sections_and_chart_numbers():
+    from analyst.chat import context_message
+
+    section = {"id": "denver", "title": "Denver sales doubled in August", "why_it_matters": "About $128,000.",
+               "metric": "sales", "segment": {}, "period": {}, "direction": "up",
+               "chart": {"title": "Denver monthly sales", "x_label": "Month", "y_label": "Sales ($)"}}  # fmt: skip
+    doc = {"as_of": "2024-09-30", "report": {"title": "t", "focus": {"headline": "h", "detail": "d"},
+           "findings": [section], "objectives": []},
+           "charts": {"denver": {"data": {"values": [{"m": "2024-07-01", "s": 64278},
+                                                     {"m": "2024-08-01", "s": 127529}]}}}}  # fmt: skip
+    text = context_message(doc, None)
+    assert "127529" in text and "Denver monthly sales" in text and "About $128,000." in text
+
+
+@needs_atlas
+async def test_chat_records_the_queries_it_ran(monkeypatch, memory_db):
+    from analyst import service
+
+    db = memory_db
+    await service.connect(db, "ws", "co_retail")
+    query = {"collection": "sales", "stages": [{"$count": "orders"}]}
+    call, _ = fake_llm([([tool("run_aggregate", query)], "tool_use"), ([text("There are some orders.")], "end_turn")])
+    monkeypatch.setattr(llm, "call", call)
+    out = await service.chat_message(db, "ws", "How many orders are there?")
+    stored = await db.messages.find_one({"_id": out["reply_id"]})
+    assert stored["checks"][0]["tool"] == "run_aggregate" and stored["checks"][0]["ok"]
+    assert stored["checks"][0]["input"] == query

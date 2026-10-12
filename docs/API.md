@@ -43,7 +43,7 @@ Only these calls use the AI model. Everything else (memory, compare, undo, forge
 | Call | What it does | Typical cost |
 |---|---|---|
 | `POST /companies/{id}/reports` | The analyst explores the data and writes a report | $0.06 to $0.15 |
-| `POST /companies/{id}/chat` | One chat message: the analyst answers and may keep a lesson | $0.01 to $0.08 |
+| `POST /companies/{id}/chat` | One chat message: the analyst answers and may keep a lesson | $0.02 to $0.10 |
 | `POST /companies/{id}/dream` | Turns working memory into long-term memory | $0.02 to $0.08 |
 | `POST /companies/{id}/reflect` | Older batch version of dreaming, used by the simulator | $0.01 to $0.05 |
 
@@ -414,7 +414,10 @@ Newest first: `[{ "_id": "conv_...", "workspace_id", "mode", "report_id", "creat
 ### `GET /conversations/{conversation_id}/messages`
 
 Oldest first. User messages: `{ "_id", "role": "user", "text", "finding_id", "template_id", "created_at" }`.
-Replies: `{ "_id", "role": "assistant", "text", "lessons": [...], "steps": ["step_..."], "cost_usd", "created_at" }`.
+Replies: `{ "_id", "role": "assistant", "text", "lessons": [...], "steps": ["step_..."], "checks": [...], "cost_usd", "created_at" }`.
+`checks` lists every query the analyst ran to answer: `[{ "tool", "input", "ok", "result_preview" }]`. Handy for a
+"show what it checked" toggle under a reply. In chat the analyst sees the report as the reader does: every
+section's text, and each chart's title, labels, and numbers.
 
 ---
 

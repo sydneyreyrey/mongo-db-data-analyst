@@ -21,7 +21,8 @@ MAX_TURNS = 30
 SANITY_CHECK = (
     "When a number jumps or drops sharply, check whether it is real before explaining it: look at who or what is "
     "behind it (the customers, accounts, or records involved), and watch for test or internal records, "
-    "duplicates, and odd values."
+    "duplicates, and odd values. Look at actual examples, not just counts: sample a few of the records and group "
+    "them by their parts (for example the domain of an email address, or the prefix of an ID or name)."
 )
 WRAP_UP_AT = 6  # turns left when the agent is told to submit
 VALUE_TOLERANCE = 0.01  # relative difference allowed between a stated objective value and its pipeline

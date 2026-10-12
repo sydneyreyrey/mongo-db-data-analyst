@@ -147,3 +147,10 @@ async def test_sections_without_charts_and_format_proof():
         await _validate_report(data, custom, report)
     followed = {**report, "format_followed": ["Sales first: the overview section.", "Costs: ...", "Profit: ..."]}
     assert (await _validate_report(data, custom, followed))[0].format_followed
+
+
+def test_single_value_charts_are_rejected():
+    one = [{"m": "2024-08", "s": 75938.9}]
+    chart = Chart(type="bar", x="m", y="s", title="Test orders in August", x_label="Month", y_label="Revenue ($)")
+    assert any("only one value" in p for p in chart_problems(chart, one))
+    assert not any("only one value" in p for p in chart_problems(chart, one + [{"m": "2024-07", "s": 1.0}]))

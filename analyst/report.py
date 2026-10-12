@@ -119,6 +119,11 @@ def chart_problems(chart: Chart, rows: list[dict] | None = None) -> list[str]:
         problems.append("chart color_label is required when color is used")
     if len(chart.title) > 90:
         problems.append("chart title is too long; keep it under 90 characters")
+    if rows is not None and len({r.get(chart.x) for r in rows}) < 2:
+        problems.append(
+            "chart shows only one value; a chart needs at least two to compare (other months, other places, or the "
+            "rest of the business). Compare against something, or say the number in the text and drop the chart"
+        )
     if rows and chart.color:
         series = {r.get(chart.color) for r in rows}
         if len(series) > MAX_SERIES:

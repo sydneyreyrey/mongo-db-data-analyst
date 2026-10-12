@@ -239,7 +239,8 @@ async def chat_message(
         step_ids = [step["_id"] for step in reply.steps]
         await db.messages.insert_one(
             {"_id": reply_id, "conversation_id": conversation_id, "workspace_id": workspace_id, "role": "assistant",
-             "text": reply.text or "Done.", "lessons": new_lessons, "steps": step_ids, "cost_usd": reply.cost_usd,
+             "text": reply.text or "Done.", "lessons": new_lessons, "steps": step_ids, "checks": reply.checks,
+             "cost_usd": reply.cost_usd,
              "created_at": datetime.now(UTC)}
         )  # fmt: skip
         return {
